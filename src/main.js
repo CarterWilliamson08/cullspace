@@ -4,6 +4,7 @@ const crypto = require('crypto');
 const { spawn } = require('child_process');
 const net = require('net');
 const fs = require('fs');
+const { checkForUpdates, downloadAndPrepareInstall } = require('./updater');
 
 let mainWindow = null;
 let helperProcess = null;
@@ -14,13 +15,25 @@ let helperSocket = null;
 let pending = new Map();
 let receiveBuffer = '';
 
+function packagedHelperPath() {
+  return path.join(process.resourcesPath || '', 'helper', 'CullSpace.Helper.exe');
+}
+
 function helperLaunch() {
+  if (app.isPackaged) {
+    const resource = packagedHelperPath();
+    if (!fs.existsSync(resource)) {
+      throw new Error(`Packaged helper missing: ${resource}`);
+    }
+    return { command: resource, args: ['--pipe', pipeName, '--secret', sessionSecret] };
+  }
+
   const published = path.join(__dirname, '..', 'helper', 'publish', 'CullSpace.Helper.exe');
   if (fs.existsSync(published)) {
     return { command: published, args: ['--pipe', pipeName, '--secret', sessionSecret] };
   }
 
-  const resource = path.join(process.resourcesPath || '', 'helper', 'CullSpace.Helper.exe');
+  const resource = packagedHelperPath();
   if (fs.existsSync(resource)) {
     return { command: resource, args: ['--pipe', pipeName, '--secret', sessionSecret] };
   }
@@ -58,6 +71,11 @@ function helperLaunch() {
   };
 }
 
+function helperCwd() {
+  if (app.isPackaged) return process.resourcesPath || app.getPath('userData');
+  return path.join(__dirname, '..');
+}
+
 function startHelper() {
   pipeName = `cullspace-${process.pid}-${crypto.randomBytes(8).toString('hex')}`;
   sessionSecret = crypto.randomBytes(32).toString('hex');
@@ -71,7 +89,7 @@ function startHelper() {
     const timeout = setTimeout(() => reject(new Error('Helper startup timed out')), 30000);
 
     helperProcess = spawn(command, args, {
-      cwd: path.join(__dirname, '..'),
+      cwd: helperCwd(),
       windowsHide: true,
       env: {
         ...process.env,
@@ -227,9 +245,14 @@ function callOnSocket(socket, secret, command, payload = {}, timeoutMs = 120000)
 }
 
 function helperExeForElevation() {
+  if (app.isPackaged) {
+    const resource = packagedHelperPath();
+    if (fs.existsSync(resource)) return resource;
+    throw new Error(`Packaged helper missing for elevation: ${resource}`);
+  }
   const published = path.join(__dirname, '..', 'helper', 'publish', 'CullSpace.Helper.exe');
   if (fs.existsSync(published)) return published;
-  const resource = path.join(process.resourcesPath || '', 'helper', 'CullSpace.Helper.exe');
+  const resource = packagedHelperPath();
   if (fs.existsSync(resource)) return resource;
   throw new Error('Self-contained helper not found for elevation. Run: npm run helper:publish');
 }
@@ -321,43 +344,18 @@ function createWindow() {
 }
 
 function installAppMenu() {
-  const template = [
-    {
-      label: 'File',
-      submenu: [
-        {
-          label: 'Settings',
-          click: () => mainWindow?.webContents.send('menu:settings'),
-        },
-        { type: 'separator' },
-        { role: 'quit', label: 'Exit' },
-      ],
-    },
-    {
-      label: 'View',
-      submenu: [
-        { role: 'reload' },
-        { role: 'toggleDevTools' },
-        { type: 'separator' },
-        { role: 'resetZoom' },
-        { role: 'zoomIn' },
-        { role: 'zoomOut' },
-      ],
-    },
-    {
-      label: 'Help',
-      submenu: [
-        {
-          label: 'Open logs folder',
-          click: async () => {
-            const local = path.join(process.env.LOCALAPPDATA || '', 'CullSpace', 'logs');
-            await shell.openPath(local);
-          },
-        },
-      ],
-    },
-  ];
-  Menu.setApplicationMenu(Menu.buildFromTemplate(template));
+  // In-app toolbar owns Settings / Help; hide the native menu bar.
+  Menu.setApplicationMenu(null);
+}
+
+async function runAutoUpdateCheck() {
+  try {
+    const info = await checkForUpdates();
+    if (!info.updateAvailable || !mainWindow || mainWindow.isDestroyed()) return;
+    mainWindow.webContents.send('update:available', info);
+  } catch (err) {
+    console.error('Update check failed', err);
+  }
 }
 
 app.whenReady().then(async () => {
@@ -368,6 +366,11 @@ app.whenReady().then(async () => {
   } catch (err) {
     console.error('Helper failed to start', err);
   }
+
+  // Non-blocking update check after startup settles.
+  setTimeout(() => {
+    runAutoUpdateCheck();
+  }, 2500);
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow();
@@ -406,4 +409,28 @@ ipcMain.handle('app:open-logs', async () => {
   const target = fs.existsSync(local) ? local : logs;
   await shell.openPath(target);
   return target;
+});
+
+ipcMain.handle('app:get-version', async () => app.getVersion());
+
+ipcMain.handle('update:check', async () => checkForUpdates());
+
+ipcMain.handle('update:download-and-install', async (_evt, updateInfo) => {
+  const setupPath = await downloadAndPrepareInstall(updateInfo, (progress) => {
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send('update:progress', progress);
+    }
+  });
+
+  spawn(setupPath, [], {
+    detached: true,
+    stdio: 'ignore',
+    cwd: path.dirname(setupPath),
+  }).unref();
+
+  setTimeout(() => {
+    app.quit();
+  }, 400);
+
+  return { setupPath };
 });

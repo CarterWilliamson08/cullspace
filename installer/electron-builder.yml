@@ -1,0 +1,26 @@
+appId: com.cullspace.setup
+productName: CullSpaceSetup
+copyright: Copyright © CullSpace
+directories:
+  output: ../dist-installer
+  buildResources: assets
+files:
+  - main.js
+  - preload.js
+  - install.js
+  - package.json
+  - renderer/**/*
+  - assets/**/*
+extraResources:
+  - from: payload
+    to: app-payload
+win:
+  icon: assets/cullspace.ico
+  artifactName: CullSpace-Setup-${version}-${arch}.${ext}
+  signAndEditExecutable: true
+  target:
+    - target: portable
+      arch:
+        - x64
+portable:
+  artifactName: CullSpace-Setup-${version}-${arch}.${ext}

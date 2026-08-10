@@ -1,8 +1,12 @@
 node_modules/
 dist/
+dist-installer/
+installer/payload/
+installer/node_modules/
 helper/CullSpace.Helper/bin/
 helper/CullSpace.Helper/obj/
 helper/publish/
+update-config.json
 *.user
 .DS_Store
 npm-debug.log*

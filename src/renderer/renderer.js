@@ -7,6 +7,8 @@ const state = {
   apps: [],
   tab: 'files',
   themePreference: localStorage.getItem(THEME_KEY) || 'system',
+  pendingUpdate: null,
+  updateDownloading: false,
 };
 
 const $ = (id) => document.getElementById(id);
@@ -37,6 +39,95 @@ function applyTheme(pref, { animate = false } = {}) {
   }
 }
 
+function showUpdatePrompt(info) {
+  if (!info?.updateAvailable || state.updateDownloading) return;
+  state.pendingUpdate = info;
+  showOverlay({
+    html: `
+      <h3>Update available</h3>
+      <p>A newer CullSpace release is ready to install.</p>
+      <div class="update-versions">
+        <span class="ver">${escapeHtml(info.currentVersion)}</span>
+        <span class="arrow">→</span>
+        <span class="ver">${escapeHtml(info.latestVersion)}</span>
+      </div>
+      <p class="muted">${escapeHtml(info.releaseName || `v${info.latestVersion}`)}</p>
+      ${
+        info.notes
+          ? `<div class="update-notes">${escapeHtml(info.notes)}</div>`
+          : ''
+      }
+      <div id="updateDownload" class="update-download hidden">
+        <div class="track"><div id="updateBar" class="bar"></div></div>
+        <div class="meta" id="updateMeta">Starting download…</div>
+      </div>
+      <div class="modal-actions">
+        <button type="button" id="remindLater">Remind me later</button>
+        <button type="button" class="primary" id="updateNow">Update Now</button>
+      </div>
+    `,
+  });
+
+  $('remindLater').onclick = () => {
+    // Session-only dismiss; next launch will check again.
+    state.pendingUpdate = null;
+    hideOverlay();
+    setStatus('Update reminder set', `v${info.latestVersion} available next launch`);
+  };
+
+  $('updateNow').onclick = async () => {
+    if (!state.pendingUpdate || state.updateDownloading) return;
+    state.updateDownloading = true;
+    const download = document.getElementById('updateDownload');
+    const bar = document.getElementById('updateBar');
+    const meta = document.getElementById('updateMeta');
+    const updateBtn = document.getElementById('updateNow');
+    const remindBtn = document.getElementById('remindLater');
+    download.classList.remove('hidden');
+    updateBtn.disabled = true;
+    remindBtn.disabled = true;
+    updateBtn.textContent = 'Downloading…';
+    setStatus('Downloading update…', `v${info.latestVersion}`);
+
+    try {
+      await window.cullspace.updates.install(state.pendingUpdate);
+      meta.textContent = 'Launching installer…';
+      bar.style.width = '100%';
+      setStatus('Updater launched', 'CullSpace will close');
+    } catch (err) {
+      state.updateDownloading = false;
+      updateBtn.disabled = false;
+      remindBtn.disabled = false;
+      updateBtn.textContent = 'Update Now';
+      meta.textContent = err.message || 'Download failed';
+      setStatus('Update failed', err.message || 'Download error');
+    }
+  };
+}
+
+function wireUpdateCheckButton(checkBtn, statusEl) {
+  if (!checkBtn || !window.cullspace.updates) return;
+  checkBtn.onclick = async () => {
+    checkBtn.disabled = true;
+    statusEl.textContent = 'Checking…';
+    try {
+      const info = await window.cullspace.updates.check();
+      if (info?.updateAvailable) {
+        hideOverlay();
+        showUpdatePrompt(info);
+      } else {
+        statusEl.textContent = info?.error
+          ? `Update check failed: ${info.error}`
+          : `You're on the latest version (${info?.currentVersion || '?'}).`;
+      }
+    } catch (err) {
+      statusEl.textContent = err.message || 'Update check failed';
+    } finally {
+      checkBtn.disabled = false;
+    }
+  };
+}
+
 function openSettings() {
   const pref = state.themePreference;
   showOverlay({
@@ -52,6 +143,11 @@ function openSettings() {
             <button type="button" data-theme-choice="system" class="${pref === 'system' ? 'active' : ''}">System</button>
           </div>
         </div>
+        <div class="settings-row">
+          <span>Updates</span>
+          <button type="button" id="btnCheckUpdates">Check for updates…</button>
+        </div>
+        <p id="updateCheckStatus" class="settings-hint" aria-live="polite"></p>
       </div>
       <div class="modal-actions">
         <button type="button" id="cancelModal" class="primary">Done</button>
@@ -67,6 +163,43 @@ function openSettings() {
       btn.classList.add('active');
     });
   });
+  wireUpdateCheckButton($('btnCheckUpdates'), $('updateCheckStatus'));
+}
+
+async function openHelp() {
+  let version = '…';
+  try {
+    if (window.cullspace.getVersion) version = await window.cullspace.getVersion();
+  } catch {
+    version = '?';
+  }
+
+  showOverlay({
+    html: `
+      <h3>Help</h3>
+      <p>CullSpace version <strong>${escapeHtml(version)}</strong></p>
+      <div class="settings-block">
+        <div class="settings-row">
+          <span>Updates</span>
+          <button type="button" id="btnCheckUpdates">Check for updates…</button>
+        </div>
+        <p id="updateCheckStatus" class="settings-hint" aria-live="polite"></p>
+        <div class="settings-row">
+          <span>Logs</span>
+          <button type="button" id="btnHelpLogs">Open logs folder</button>
+        </div>
+      </div>
+      <div class="modal-actions">
+        <button type="button" id="cancelModal" class="primary">Done</button>
+      </div>
+    `,
+  });
+  $('cancelModal').onclick = hideOverlay;
+  wireUpdateCheckButton($('btnCheckUpdates'), $('updateCheckStatus'));
+  const logsBtn = $('btnHelpLogs');
+  if (logsBtn) {
+    logsBtn.onclick = () => window.cullspace.openLogs();
+  }
 }
 
 function formatBytes(n) {
@@ -508,6 +641,9 @@ $('fileFilter').addEventListener('input', renderFiles);
 $('appFilter').addEventListener('input', renderApps);
 $('btnLogs').addEventListener('click', () => window.cullspace.openLogs());
 $('btnSettings').addEventListener('click', openSettings);
+$('btnHelp').addEventListener('click', () => {
+  openHelp();
+});
 if (window.cullspace.onOpenSettings) {
   window.cullspace.onOpenSettings(() => openSettings());
 }
@@ -517,4 +653,28 @@ window.matchMedia('(prefers-color-scheme: light)').addEventListener('change', ()
 });
 
 applyTheme(state.themePreference, { animate: false });
+
+if (window.cullspace.updates) {
+  window.cullspace.updates.onAvailable((info) => {
+    showUpdatePrompt(info);
+  });
+  window.cullspace.updates.onProgress((progress) => {
+    const bar = document.getElementById('updateBar');
+    const meta = document.getElementById('updateMeta');
+    if (!bar || !meta) return;
+    if (progress.percent != null) {
+      bar.style.width = `${progress.percent}%`;
+      meta.textContent =
+        progress.total > 0
+          ? `Downloading… ${progress.percent}%`
+          : `Downloading… ${Math.round((progress.received || 0) / (1024 * 1024))} MB`;
+    } else {
+      meta.textContent = `Downloading… ${Math.round((progress.received || 0) / (1024 * 1024))} MB`;
+    }
+  });
+  window.cullspace.updates.onStatus((payload) => {
+    if (payload?.message) setStatus(payload.message, 'Updates');
+  });
+}
+
 boot();

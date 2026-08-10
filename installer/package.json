@@ -1,0 +1,13 @@
+{
+  "name": "cullspace-setup",
+  "version": "1.0.1",
+  "description": "CullSpace branded installer",
+  "main": "main.js",
+  "author": "CarterWilliamson08",
+  "license": "MIT",
+  "private": true,
+  "devDependencies": {
+    "electron": "^37.2.0",
+    "electron-builder": "^26.0.12"
+  }
+}

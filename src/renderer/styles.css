@@ -17,6 +17,7 @@
   --control-hover: #3e4652;
   --row-hover: color-mix(in srgb, var(--accent) 14%, var(--surface));
   --row-alt: #22272e;
+  --item-bg: rgba(0, 0, 0, 0.18);
   --overlay: rgba(8, 10, 14, 0.62);
   --shadow: 0 14px 34px rgba(0, 0, 0, 0.42);
   --radius: 10px;
@@ -44,6 +45,7 @@
   --control-hover: #eef2f6;
   --row-hover: #e8f5ef;
   --row-alt: #fafbfc;
+  --item-bg: rgba(23, 32, 42, 0.04);
   --overlay: rgba(18, 24, 32, 0.4);
   --shadow: 0 14px 30px rgba(20, 28, 36, 0.16);
   color-scheme: light;
@@ -681,6 +683,13 @@ input[type='number'] {
   color: var(--muted);
 }
 
+.settings-hint {
+  margin: 0;
+  min-height: 1.2em;
+  color: var(--muted);
+  font-size: 12px;
+}
+
 .segmented {
   display: grid;
   grid-template-columns: repeat(3, 1fr);
@@ -823,6 +832,76 @@ input[type='number'] {
 
 .progress.danger span {
   background: linear-gradient(90deg, transparent, var(--danger), transparent);
+}
+
+.update-versions {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  margin: 12px 0 4px;
+  font-variant-numeric: tabular-nums;
+}
+
+.update-versions .ver {
+  padding: 6px 10px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--line);
+  background: var(--surface-2);
+  font-weight: 650;
+}
+
+.update-versions .arrow {
+  color: var(--accent);
+  font-weight: 700;
+}
+
+.update-notes {
+  margin-top: 10px;
+  max-height: 120px;
+  overflow: auto;
+  padding: 8px 10px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--line);
+  background: var(--item-bg);
+  color: var(--muted);
+  white-space: pre-wrap;
+  font-size: 12px;
+}
+
+.update-download {
+  margin-top: 14px;
+}
+
+.update-download .track {
+  height: 8px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--line) 85%, transparent);
+  overflow: hidden;
+}
+
+.update-download .bar {
+  height: 100%;
+  width: 0%;
+  border-radius: inherit;
+  background: linear-gradient(90deg, color-mix(in srgb, var(--accent) 65%, #000), var(--accent));
+  transition: width 180ms var(--ease);
+  position: relative;
+  overflow: hidden;
+}
+
+.update-download .bar::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.3), transparent);
+  animation: barSlide 1.1s ease-in-out infinite;
+}
+
+.update-download .meta {
+  margin-top: 8px;
+  color: var(--muted);
+  font-size: 12px;
 }
 
 @keyframes floatY {

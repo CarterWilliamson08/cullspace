@@ -19,3 +19,9 @@
 1. Official uninstaller is launched with UAC (`runas`).
 2. Leftover related paths are previewed.
 3. Second typed confirmation + elevated delete for leftovers only.
+
+## Auto-update
+- Update checks use the GitHub Releases API for `CarterWilliamson08/cullspace`.
+- Optional read-only token may be embedded at package time via `CULLSPACE_GH_TOKEN` → `resources/update-config.json` (gitignored; never commit secrets).
+- Downloads only assets matching `CullSpace-Setup-*.exe`.
+- User must confirm **Update Now** before download/install; **Remind me later** is session-only.
