@@ -214,6 +214,17 @@ function formatBytes(n) {
   return `${v.toFixed(i === 0 ? 0 : 1)} ${units[i]}`;
 }
 
+const MB = 1024 * 1024;
+const GB = 1024 * MB;
+
+function sizeImpactClass(bytes) {
+  const n = Number(bytes) || 0;
+  if (n >= 5 * GB) return 'size-xl';
+  if (n >= 1 * GB) return 'size-lg';
+  if (n >= 100 * MB) return 'size-md';
+  return 'size-sm';
+}
+
 function showOverlay({ scan = false, del = false, html = '' }) {
   const overlay = $('overlay');
   overlay.classList.remove('hidden', 'closing');
@@ -366,7 +377,7 @@ function renderFiles() {
         <div>${escapeHtml(f.name || f.path)}</div>
         <div class="path">${escapeHtml(f.path)}</div>
       </div>
-      <div class="size">${formatBytes(f.sizeBytes)}</div>
+      <div class="size ${sizeImpactClass(f.sizeBytes)}">${formatBytes(f.sizeBytes)}</div>
       <button type="button">Remove…</button>
     `;
     row.querySelector('button').addEventListener('click', () => previewFileRemove(f));

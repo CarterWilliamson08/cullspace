@@ -443,6 +443,34 @@ body.theme-animating .drive {
   white-space: nowrap;
 }
 
+.item .size.size-sm {
+  color: var(--muted);
+}
+
+.item .size.size-md {
+  color: #d4a017;
+}
+
+.item .size.size-lg {
+  color: #e07a2f;
+}
+
+.item .size.size-xl {
+  color: #e25555;
+}
+
+[data-theme='light'] .item .size.size-md {
+  color: #b8860b;
+}
+
+[data-theme='light'] .item .size.size-lg {
+  color: #c45f12;
+}
+
+[data-theme='light'] .item .size.size-xl {
+  color: #c62828;
+}
+
 .statusbar {
   display: flex;
   justify-content: space-between;

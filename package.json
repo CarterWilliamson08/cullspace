@@ -1,6 +1,6 @@
 {
   "name": "cullspace",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "description": "Scan drives, surface the largest files and apps, and securely remove them.",
   "main": "src/main.js",
   "scripts": {
@@ -22,7 +22,8 @@
     "shortcut": "powershell -ExecutionPolicy Bypass -File scripts/create-shortcut.ps1",
     "pack": "node scripts/ensure-update-config.js && npm run helper:publish && electron-builder --win dir",
     "pack:app": "npm run pack",
-    "installer": "node scripts/build-installer.js"
+    "installer": "node scripts/build-installer.js",
+    "installer:fast": "node scripts/build-installer-fast.js"
   },
   "author": "CarterWilliamson08",
   "license": "MIT",

@@ -40,6 +40,14 @@ npm run installer
 # output: dist/CullSpace-Setup-<version>-x64.exe
 ```
 
+For local Setup UI / install-logic iteration (reuses an existing payload, skips helper republish, main app pack, and portable compression):
+
+```powershell
+# After you've run `npm run installer` or `npm run pack` at least once:
+npm run installer:fast
+# output: dist-installer/win-unpacked/CullSpaceSetup.exe
+```
+
 - Default install path: `%LOCALAPPDATA%\Programs\CullSpace`
 - Creates Desktop + Start Menu shortcuts
 - Includes an Uninstall shortcut in the Start Menu
