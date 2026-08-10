@@ -1,0 +1,126 @@
+using System.Security.Principal;
+
+namespace CullSpace.Helper;
+
+public static class Security
+{
+    private static readonly string[] ProtectedRoots = BuildProtectedRoots();
+
+    private static readonly HashSet<string> ProtectedExact = new(StringComparer.OrdinalIgnoreCase)
+    {
+        Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
+        Environment.GetFolderPath(Environment.SpecialFolder.Windows),
+        Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles),
+        Environment.GetFolderPath(Environment.SpecialFolder.ProgramFilesX86),
+        Path.GetPathRoot(Environment.SystemDirectory) ?? @"C:\",
+    };
+
+    private static string[] BuildProtectedRoots()
+    {
+        var list = new List<string>
+        {
+            Environment.GetFolderPath(Environment.SpecialFolder.Windows),
+            Environment.GetFolderPath(Environment.SpecialFolder.System),
+            Environment.GetFolderPath(Environment.SpecialFolder.SystemX86),
+            Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.Windows), "System32"),
+            Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.Windows), "SysWOW64"),
+            Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles), "WindowsApps"),
+        };
+
+        var common = Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData);
+        if (!string.IsNullOrEmpty(common))
+            list.Add(Path.Combine(common, "Microsoft"));
+
+        return list.Where(p => !string.IsNullOrWhiteSpace(p)).ToArray();
+    }
+
+    public static bool IsAdministrator()
+    {
+        using var identity = WindowsIdentity.GetCurrent();
+        var principal = new WindowsPrincipal(identity);
+        return principal.IsInRole(WindowsBuiltInRole.Administrator);
+    }
+
+    public static string? TryCanonicalize(string path)
+    {
+        if (string.IsNullOrWhiteSpace(path))
+            return null;
+        if (path.Contains("..", StringComparison.Ordinal))
+            return null;
+
+        try
+        {
+            var full = Path.GetFullPath(path);
+            if (!Path.IsPathRooted(full))
+                return null;
+            return full;
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    public static bool IsProtectedPath(string canonicalPath)
+    {
+        var trimmed = canonicalPath.TrimEnd('\\');
+        if (ProtectedExact.Contains(trimmed))
+            return true;
+
+        foreach (var root in ProtectedRoots)
+        {
+            var r = Path.GetFullPath(root).TrimEnd('\\') + "\\";
+            var p = trimmed + "\\";
+            if (p.StartsWith(r, StringComparison.OrdinalIgnoreCase))
+                return true;
+        }
+
+        return false;
+    }
+
+    public static bool IsUnderAllowedDrives(string canonicalPath, IEnumerable<string> allowedDrives)
+    {
+        var root = Path.GetPathRoot(canonicalPath);
+        if (string.IsNullOrEmpty(root))
+            return false;
+
+        foreach (var d in allowedDrives)
+        {
+            var driveRoot = Path.GetPathRoot(Path.GetFullPath(d));
+            if (!string.IsNullOrEmpty(driveRoot) &&
+                string.Equals(root, driveRoot, StringComparison.OrdinalIgnoreCase))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    public static void EnsureLogDir()
+    {
+        var dir = Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+            "CullSpace",
+            "logs");
+        Directory.CreateDirectory(dir);
+    }
+
+    public static void Audit(string message)
+    {
+        try
+        {
+            EnsureLogDir();
+            var path = Path.Combine(
+                Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+                "CullSpace",
+                "logs",
+                $"audit-{DateTime.UtcNow:yyyyMMdd}.log");
+            File.AppendAllText(path, $"{DateTime.UtcNow:o} {message}{Environment.NewLine}");
+        }
+        catch
+        {
+            // best-effort audit
+        }
+    }
+}

@@ -1,0 +1,54 @@
+{
+  "name": "cullspace",
+  "version": "0.1.0",
+  "description": "Scan drives, surface the largest files and apps, and securely remove them.",
+  "main": "src/main.js",
+  "scripts": {
+    "start": "electron .",
+    "helper:build": "dotnet build helper/CullSpace.Helper/CullSpace.Helper.csproj -c Release",
+    "helper:publish": "dotnet publish helper/CullSpace.Helper/CullSpace.Helper.csproj -c Release -r win-x64 --self-contained true -o helper/publish /p:PublishSingleFile=true /p:IncludeNativeLibrariesForSelfExtract=true",
+    "helper:run": "dotnet run --project helper/CullSpace.Helper/CullSpace.Helper.csproj -c Release",
+    "smoke:ping": "node scripts/smoke-ping.js",
+    "smoke:scan": "node scripts/smoke-scan.js",
+    "smoke:apps": "node scripts/smoke-apps.js",
+    "smoke:related": "node scripts/smoke-related.js",
+    "smoke:delete": "node scripts/smoke-delete.js",
+    "smoke:uninstall": "node scripts/smoke-uninstall-preview.js",
+    "smoke:all": "node scripts/smoke-ping.js && node scripts/smoke-scan.js && node scripts/smoke-apps.js && node scripts/smoke-related.js && node scripts/smoke-delete.js && node scripts/smoke-uninstall-preview.js && node scripts/smoke-electron.js",
+    "smoke:electron": "node scripts/smoke-electron.js",
+    "icon": "node scripts/clean-icon.js && node scripts/make-icon.js",
+    "shortcut": "powershell -ExecutionPolicy Bypass -File scripts/create-shortcut.ps1",
+    "pack": "npm run helper:publish && electron-builder --win dir"
+  },
+  "author": "CarterWilliamson08",
+  "license": "MIT",
+  "devDependencies": {
+    "electron": "^37.2.0",
+    "electron-builder": "^26.0.12"
+  },
+  "build": {
+    "appId": "com.cullspace.app",
+    "productName": "CullSpace",
+    "directories": {
+      "output": "dist"
+    },
+    "win": {
+      "icon": "assets/cullspace.ico",
+      "target": [
+        "dir"
+      ]
+    },
+    "files": [
+      "src/**/*",
+      "assets/**/*",
+      "package.json"
+    ],
+    "extraResources": [
+      {
+        "from": "helper/publish",
+        "to": "helper"
+      }
+    ]
+  },
+  "allowScripts": {}
+}

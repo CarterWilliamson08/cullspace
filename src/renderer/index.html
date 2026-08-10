@@ -1,0 +1,125 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self'; img-src 'self' data:;"
+    />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>CullSpace</title>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <div id="themeVeil" class="theme-veil" aria-hidden="true"></div>
+
+    <div id="splash" class="splash">
+      <div class="splash-stage">
+        <div class="splash-ring"></div>
+        <div class="splash-ring delay"></div>
+        <img src="./icon.png?v=6" alt="CullSpace" class="splash-icon" />
+      </div>
+      <div class="splash-copy">
+        <strong>CullSpace</strong>
+        <span class="splash-sub">Starting…</span>
+        <div class="splash-bar"><span></span></div>
+      </div>
+    </div>
+
+    <div id="app" class="app hidden">
+      <header class="toolbar">
+        <div class="toolbar-brand">
+          <img src="./icon.png?v=6" alt="" class="brand-icon" />
+          <span class="brand-title">CullSpace</span>
+        </div>
+        <div class="toolbar-spacer"></div>
+        <button id="btnSettings" type="button">Settings</button>
+        <button id="btnLogs" type="button">Logs</button>
+        <button id="btnRefreshDrives" type="button">Refresh</button>
+      </header>
+
+      <section class="group drives-group">
+        <div class="group-title">
+          <span>Drives</span>
+          <label class="check">
+            <input id="includeNetwork" type="checkbox" />
+            Include network / optical
+          </label>
+        </div>
+        <div id="driveList" class="drive-list"></div>
+      </section>
+
+      <nav class="tabstrip" role="tablist">
+        <button class="tab active" data-tab="files" type="button" role="tab">Largest files</button>
+        <button class="tab" data-tab="apps" type="button" role="tab">Installed apps</button>
+        <span id="tabInk" class="tab-ink"></span>
+      </nav>
+
+      <section id="filesPane" class="content-pane">
+        <div class="pane-toolbar">
+          <input id="fileFilter" class="field grow" type="search" placeholder="Search files" />
+          <label class="label-inline">
+            Limit
+            <input id="fileLimit" class="field" type="number" min="10" max="500" value="100" />
+          </label>
+          <button id="btnScanFiles" class="primary" type="button">Scan</button>
+          <span id="scanStatus" class="status"></span>
+        </div>
+        <div class="list-head files-head">
+          <span>Name</span>
+          <span>Size</span>
+          <span></span>
+        </div>
+        <div id="fileResults" class="list-body"></div>
+      </section>
+
+      <section id="appsPane" class="content-pane hidden">
+        <div class="pane-toolbar">
+          <input id="appFilter" class="field grow" type="search" placeholder="Filter apps" />
+          <button id="btnLoadApps" class="primary" type="button">Load apps</button>
+          <span id="appStatus" class="status"></span>
+        </div>
+        <div class="list-head apps-head">
+          <span>Application</span>
+          <span>Size</span>
+          <span></span>
+        </div>
+        <div id="appResults" class="list-body"></div>
+      </section>
+
+      <footer class="statusbar">
+        <span id="statusLeft" class="status-chip">Ready</span>
+        <span id="statusRight" class="status-chip">Secure helper</span>
+      </footer>
+    </div>
+
+    <div id="overlay" class="overlay hidden">
+      <div class="modal">
+        <div id="animScan" class="anim anim-scan hidden">
+          <div class="scan-visual">
+            <div class="radar"></div>
+            <div class="scan-beam"></div>
+            <div class="scan-dots">
+              <i></i><i></i><i></i><i></i><i></i><i></i>
+            </div>
+          </div>
+          <p>Scanning…</p>
+          <div class="progress"><span></span></div>
+        </div>
+        <div id="animDelete" class="anim anim-delete hidden">
+          <div class="delete-visual">
+            <div class="burn"></div>
+            <div class="shards">
+              <i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i>
+            </div>
+          </div>
+          <p>Removing…</p>
+          <div class="progress danger"><span></span></div>
+        </div>
+        <div id="modalBody" class="modal-body"></div>
+      </div>
+    </div>
+
+    <script src="renderer.js"></script>
+  </body>
+</html>
