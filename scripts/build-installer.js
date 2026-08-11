@@ -50,10 +50,11 @@ function copyRecursive(src, dest) {
 function mirrorDir(src, dest) {
   fs.mkdirSync(dest, { recursive: true });
   if (process.platform === 'win32') {
+    // Do not use shell:true — paths with spaces (e.g. "Cursor Projects") break.
     const result = spawnSync(
       'robocopy',
       [src, dest, '/MIR', '/R:2', '/W:1', '/NFL', '/NDL', '/NJH', '/NJS', '/NC', '/NS', '/NP'],
-      { cwd: root, stdio: 'inherit', shell: true }
+      { cwd: root, stdio: 'inherit', windowsHide: true }
     );
     // robocopy: 0–7 = success with varying copy counts
     const code = result.status == null ? 1 : result.status;
