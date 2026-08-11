@@ -7,6 +7,18 @@ namespace CullSpace.Helper;
 [SupportedOSPlatform("windows")]
 public static class Services
 {
+    private static volatile bool _cancelScanRequested;
+
+    public static object RequestCancelScan()
+    {
+        _cancelScanRequested = true;
+        return new { cancelled = true };
+    }
+
+    private static void ResetCancelScan() => _cancelScanRequested = false;
+
+    private static bool IsScanCancelRequested() => _cancelScanRequested;
+
     public static List<DriveInfoDto> ListDrives(bool includeNetworkOptical)
     {
         var list = new List<DriveInfoDto>();
@@ -60,14 +72,23 @@ public static class Services
         "hiberfil.sys", "pagefile.sys", "swapfile.sys", "DumpStack.log.tmp",
     };
 
-    public static List<FileEntryDto> ScanLargestFiles(IEnumerable<string> drives, int limit, IProgress<string>? progress = null)
+    public static ScanResultDto ScanLargestFiles(
+        IEnumerable<string> drives,
+        int limit,
+        IProgress<string>? progress = null,
+        bool includeProgramFiles = false)
     {
+        ResetCancelScan();
         var top = CreateTopSet();
         var skipNames = DefaultSkipDirNames();
         var skipFiles = DefaultSkipFileNames();
+        var stats = new ScanStatsDto();
 
         foreach (var drive in drives)
         {
+            if (IsScanCancelRequested())
+                break;
+
             var root = Security.TryCanonicalize(drive);
             if (root is null)
                 continue;
@@ -75,7 +96,16 @@ public static class Services
             progress?.Report($"Scanning {root}");
             try
             {
-                EnumerateFilesSafe(root, skipNames, skipFiles, top, limit, progress, allowUnderRoot: null);
+                EnumerateFilesSafe(
+                    root,
+                    skipNames,
+                    skipFiles,
+                    top,
+                    limit,
+                    progress,
+                    allowUnderRoot: null,
+                    includeProgramFiles,
+                    stats);
             }
             catch
             {
@@ -83,11 +113,16 @@ public static class Services
             }
         }
 
-        return TopToFileEntries(top, limit, asDirectories: false);
+        return new ScanResultDto
+        {
+            Items = TopToFileEntries(top, limit, asDirectories: false),
+            Stats = stats,
+        };
     }
 
-    public static List<FileEntryDto> ScanFolderFiles(string rootPath, int limit, IProgress<string>? progress = null)
+    public static ScanResultDto ScanFolderFiles(string rootPath, int limit, IProgress<string>? progress = null)
     {
+        ResetCancelScan();
         var root = Security.TryCanonicalize(rootPath)
             ?? throw new InvalidOperationException("Invalid folder path");
         if (!Directory.Exists(root))
@@ -95,30 +130,47 @@ public static class Services
 
         Security.EnsureFolderScanRootAllowed(root);
 
+        var clamped = Math.Clamp(limit, 1, 500);
         var top = CreateTopSet();
+        var stats = new ScanStatsDto();
         progress?.Report($"Scanning folder {root}");
         EnumerateFilesSafe(
             root,
             DefaultSkipDirNames(),
             DefaultSkipFileNames(),
             top,
-            Math.Clamp(limit, 1, 500),
+            clamped,
             progress,
-            allowUnderRoot: root);
+            allowUnderRoot: root,
+            includeProgramFiles: true,
+            stats);
 
-        return TopToFileEntries(top, Math.Clamp(limit, 1, 500), asDirectories: false);
+        return new ScanResultDto
+        {
+            Items = TopToFileEntries(top, clamped, asDirectories: false),
+            Stats = stats,
+        };
     }
 
-    public static List<FileEntryDto> ScanLargestFolders(IEnumerable<string> drives, int limit, IProgress<string>? progress = null)
+    public static ScanResultDto ScanLargestFolders(
+        IEnumerable<string> drives,
+        int limit,
+        IProgress<string>? progress = null,
+        bool includeProgramFiles = false,
+        bool dedupeDeepest = false)
     {
+        ResetCancelScan();
         var clamped = Math.Clamp(limit, 1, 500);
         var skipNames = DefaultSkipDirNames();
         var skipFiles = DefaultSkipFileNames();
         var sizes = new Dictionary<string, long>(StringComparer.OrdinalIgnoreCase);
-        var counted = 0;
+        var stats = new ScanStatsDto();
 
         foreach (var drive in drives)
         {
+            if (IsScanCancelRequested())
+                break;
+
             var root = Security.TryCanonicalize(drive);
             if (root is null)
                 continue;
@@ -127,18 +179,29 @@ public static class Services
             try
             {
                 var stack = new Stack<string>();
-                stack.Push(root);
+                if (!ShouldSkipDirectory(root, allowUnderRoot: null, includeProgramFiles, stats))
+                    stack.Push(root);
 
                 while (stack.Count > 0)
                 {
+                    if (IsScanCancelRequested())
+                        break;
+
                     var dir = stack.Pop();
-                    if (ShouldSkipDirectory(dir, allowUnderRoot: null))
-                        continue;
 
                     IEnumerable<string> files = Array.Empty<string>();
                     IEnumerable<string> dirs = Array.Empty<string>();
-                    try { files = Directory.EnumerateFiles(dir); } catch { }
-                    try { dirs = Directory.EnumerateDirectories(dir); } catch { }
+                    try { files = Directory.EnumerateFiles(dir); }
+                    catch
+                    {
+                        stats.AccessDenied++;
+                    }
+
+                    try { dirs = Directory.EnumerateDirectories(dir); }
+                    catch
+                    {
+                        stats.AccessDenied++;
+                    }
 
                     foreach (var file in files)
                     {
@@ -152,9 +215,13 @@ public static class Services
                                 continue;
 
                             AddSizeToAncestors(sizes, info.FullName, info.Length, root);
-                            counted++;
-                            if (counted % 2500 == 0)
-                                progress?.Report($"Sized {counted:N0} files…");
+                            stats.ScannedFiles++;
+                            if (stats.ScannedFiles % 2500 == 0)
+                                progress?.Report($"Sized {stats.ScannedFiles:N0} files…");
+                        }
+                        catch (UnauthorizedAccessException)
+                        {
+                            stats.AccessDenied++;
                         }
                         catch { }
                     }
@@ -164,7 +231,7 @@ public static class Services
                         var name = Path.GetFileName(sub);
                         if (skipNames.Contains(name))
                             continue;
-                        if (ShouldSkipDirectory(sub, allowUnderRoot: null))
+                        if (ShouldSkipDirectory(sub, allowUnderRoot: null, includeProgramFiles, stats))
                             continue;
                         stack.Push(sub);
                     }
@@ -176,15 +243,72 @@ public static class Services
             }
         }
 
+        var ranked = sizes
+            .Where(kv => !IsDriveRoot(kv.Key))
+            .OrderByDescending(kv => kv.Value)
+            .ThenBy(kv => kv.Key, StringComparer.OrdinalIgnoreCase)
+            .Select(kv => (Size: kv.Value, Path: kv.Key));
+
+        var selected = SelectTopFolders(ranked, clamped, dedupeDeepest);
         var top = CreateTopSet();
-        foreach (var (path, size) in sizes)
+        foreach (var item in selected)
+            top.Add(item);
+
+        return new ScanResultDto
         {
-            if (IsDriveRoot(path))
+            Items = TopToFileEntries(top, clamped, asDirectories: true),
+            Stats = stats,
+        };
+    }
+
+    private static List<(long Size, string Path)> SelectTopFolders(
+        IEnumerable<(long Size, string Path)> ranked,
+        int limit,
+        bool dedupeDeepest)
+    {
+        var selected = new List<(long Size, string Path)>();
+        // When deduping, keep scanning past the first `limit` hits so a deeper child can
+        // replace its parent; cap the walk for very large trees.
+        var walkLimit = dedupeDeepest ? Math.Max(limit * 100, 500) : limit;
+        var walked = 0;
+
+        foreach (var item in ranked)
+        {
+            walked++;
+            if (!dedupeDeepest)
+            {
+                selected.Add(item);
+                if (selected.Count >= limit)
+                    break;
                 continue;
-            InsertTop(top, size, path, clamped);
+            }
+
+            if (walked > walkLimit && selected.Count >= limit)
+                break;
+
+            // Prefer deepest: skip ancestors of an already-selected child.
+            if (selected.Any(s => Security.IsUnderOrEqual(s.Path, item.Path) &&
+                                  !string.Equals(s.Path, item.Path, StringComparison.OrdinalIgnoreCase)))
+            {
+                continue;
+            }
+
+            // Drop any selected parents of this deeper folder.
+            selected.RemoveAll(s =>
+                Security.IsUnderOrEqual(item.Path, s.Path) &&
+                !string.Equals(s.Path, item.Path, StringComparison.OrdinalIgnoreCase));
+
+            if (selected.Count >= limit)
+                continue;
+
+            selected.Add(item);
         }
 
-        return TopToFileEntries(top, clamped, asDirectories: true);
+        return selected
+            .OrderByDescending(x => x.Size)
+            .ThenBy(x => x.Path, StringComparer.OrdinalIgnoreCase)
+            .Take(limit)
+            .ToList();
     }
 
     private static void AddSizeToAncestors(
@@ -228,18 +352,47 @@ public static class Services
         return results;
     }
 
-    private static bool ShouldSkipDirectory(string dir, string? allowUnderRoot)
+    private static bool ShouldSkipDirectory(
+        string dir,
+        string? allowUnderRoot,
+        bool includeProgramFiles,
+        ScanStatsDto stats)
     {
         if (IsDriveRoot(dir))
             return false;
 
         if (Security.IsHardProtectedPath(dir))
+        {
+            stats.SkippedProtected++;
             return true;
+        }
 
         if (allowUnderRoot is not null && Security.IsUnderOrEqual(dir, allowUnderRoot))
             return false;
 
-        return Security.IsProtectedPath(dir);
+        // Drive scans may descend into the user profile (still soft-protected for deletes).
+        if (Security.IsUserProfileRoot(dir))
+            return false;
+
+        // Program Files is skipped unless opted in; WindowsApps remains hard-protected above.
+        if (Security.IsProgramFilesRoot(dir))
+        {
+            if (!includeProgramFiles)
+            {
+                stats.SkippedProtected++;
+                return true;
+            }
+
+            return false;
+        }
+
+        if (Security.IsProtectedPath(dir))
+        {
+            stats.SkippedProtected++;
+            return true;
+        }
+
+        return false;
     }
 
     private static void EnumerateFilesSafe(
@@ -249,22 +402,34 @@ public static class Services
         SortedSet<(long Size, string Path)> top,
         int limit,
         IProgress<string>? progress,
-        string? allowUnderRoot)
+        string? allowUnderRoot,
+        bool includeProgramFiles,
+        ScanStatsDto stats)
     {
         var stack = new Stack<string>();
-        stack.Push(root);
-        var counted = 0;
+        if (!ShouldSkipDirectory(root, allowUnderRoot, includeProgramFiles, stats))
+            stack.Push(root);
 
         while (stack.Count > 0)
         {
+            if (IsScanCancelRequested())
+                break;
+
             var dir = stack.Pop();
-            if (ShouldSkipDirectory(dir, allowUnderRoot))
-                continue;
 
             IEnumerable<string> files = Array.Empty<string>();
             IEnumerable<string> dirs = Array.Empty<string>();
-            try { files = Directory.EnumerateFiles(dir); } catch { }
-            try { dirs = Directory.EnumerateDirectories(dir); } catch { }
+            try { files = Directory.EnumerateFiles(dir); }
+            catch
+            {
+                stats.AccessDenied++;
+            }
+
+            try { dirs = Directory.EnumerateDirectories(dir); }
+            catch
+            {
+                stats.AccessDenied++;
+            }
 
             foreach (var file in files)
             {
@@ -277,9 +442,13 @@ public static class Services
                     if (!info.Exists)
                         continue;
                     InsertTop(top, info.Length, info.FullName, limit);
-                    counted++;
-                    if (counted % 2500 == 0)
-                        progress?.Report($"Scanned {counted:N0} files…");
+                    stats.ScannedFiles++;
+                    if (stats.ScannedFiles % 2500 == 0)
+                        progress?.Report($"Scanned {stats.ScannedFiles:N0} files…");
+                }
+                catch (UnauthorizedAccessException)
+                {
+                    stats.AccessDenied++;
                 }
                 catch { }
             }
@@ -289,7 +458,7 @@ public static class Services
                 var name = Path.GetFileName(sub);
                 if (skipNames.Contains(name))
                     continue;
-                if (ShouldSkipDirectory(sub, allowUnderRoot))
+                if (ShouldSkipDirectory(sub, allowUnderRoot, includeProgramFiles, stats))
                     continue;
                 stack.Push(sub);
             }

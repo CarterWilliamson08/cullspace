@@ -31,6 +31,7 @@ function createClient() {
   let socket = null;
   let buffer = '';
   const pending = new Map();
+  let lastProgress = null;
 
   child.stderr.on('data', (b) => {
     const t = b.toString();
@@ -72,6 +73,10 @@ function createClient() {
         }
         const waiter = pending.get(msg.id);
         if (!waiter) continue;
+        if (msg.progress) {
+          lastProgress = msg.progress;
+          continue;
+        }
         pending.delete(msg.id);
         if (msg.ok) waiter.resolve(msg.result);
         else waiter.reject(new Error(msg.error || 'fail'));
@@ -114,7 +119,7 @@ function createClient() {
     }
   }
 
-  return { call, close, pipeName };
+  return { call, close, pipeName, get lastProgress() { return lastProgress; } };
 }
 
 module.exports = { createClient, root };

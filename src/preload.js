@@ -2,9 +2,17 @@ const { contextBridge, ipcRenderer } = require('electron');
 
 contextBridge.exposeInMainWorld('cullspace', {
   call: (command, payload) => ipcRenderer.invoke('helper:call', command, payload),
+  beginElevated: () => ipcRenderer.invoke('helper:begin-elevated'),
+  endElevated: () => ipcRenderer.invoke('helper:end-elevated'),
+  waitForPid: (pid, timeoutMs) => ipcRenderer.invoke('app:wait-for-pid', pid, timeoutMs),
   openLogs: () => ipcRenderer.invoke('app:open-logs'),
   getVersion: () => ipcRenderer.invoke('app:get-version'),
   pickFolder: () => ipcRenderer.invoke('app:pick-folder'),
+  onScanProgress: (cb) => {
+    const handler = (_e, payload) => cb(payload?.message || '');
+    ipcRenderer.on('helper:progress', handler);
+    return () => ipcRenderer.removeListener('helper:progress', handler);
+  },
   onOpenSettings: (cb) => {
     const handler = () => cb();
     ipcRenderer.on('menu:settings', handler);

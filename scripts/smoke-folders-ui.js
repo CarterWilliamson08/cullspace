@@ -26,6 +26,10 @@ function assertIncludes(file, needle, label) {
   assertIncludes(js, 'scan_folder_files', 'renderer.js');
   assertIncludes(js, 'scan_largest_folders', 'renderer.js');
   assertIncludes(js, 'setFoldersMode', 'renderer.js');
+  assertIncludes(js, "foldersMode: 'folders'", 'renderer.js default Large folders');
+  assertIncludes(js, 'openFolderAsFileScan', 'renderer.js drill-in');
+  assertIncludes(html, 'data-folders-mode="folders" class="active"', 'index.html default Large folders');
+  assertIncludes(html, 'class="col-size"', 'index.html size column class');
   assertIncludes(preload, 'pickFolder', 'preload.js');
   assertIncludes(main, 'app:pick-folder', 'main.js');
   assertIncludes(main, 'scan_folder_files', 'main.js');
@@ -35,11 +39,13 @@ function assertIncludes(file, needle, label) {
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'cullspace-ui-folder-'));
   try {
     fs.writeFileSync(path.join(tmp, 'chunk.bin'), Buffer.alloc(128 * 1024, 7));
-    const files = await c.call('scan_folder_files', { root: tmp, limit: 10 });
+    const filesRaw = await c.call('scan_folder_files', { root: tmp, limit: 10 });
+    const files = Array.isArray(filesRaw) ? filesRaw : filesRaw?.items;
     if (!files?.length) throw new Error('scan_folder_files empty for UI smoke');
     const drives = await c.call('list_drives', { includeNetworkOptical: false });
     const drive = drives.find((d) => d.isFixed) || drives[0];
-    const folders = await c.call('scan_largest_folders', { drives: [drive.name], limit: 5 });
+    const foldersRaw = await c.call('scan_largest_folders', { drives: [drive.name], limit: 5 });
+    const folders = Array.isArray(foldersRaw) ? foldersRaw : foldersRaw?.items;
     if (!folders?.length) throw new Error('scan_largest_folders empty for UI smoke');
     console.log('SMOKE OK: Folders helper path for UI', files.length, 'files /', folders.length, 'folders');
   } finally {

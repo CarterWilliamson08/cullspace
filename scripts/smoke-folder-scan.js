@@ -3,6 +3,12 @@ const os = require('os');
 const path = require('path');
 const { createClient } = require('./smoke-lib');
 
+function unwrapItems(result) {
+  if (Array.isArray(result)) return result;
+  if (result && Array.isArray(result.items)) return result.items;
+  return null;
+}
+
 (async () => {
   const c = createClient();
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'cullspace-folder-'));
@@ -14,8 +20,9 @@ const { createClient } = require('./smoke-lib');
   fs.writeFileSync(smallPath, Buffer.alloc(4 * 1024, 2));
 
   try {
-    const files = await c.call('scan_folder_files', { root: tmp, limit: 20 });
-    if (!Array.isArray(files) || files.length < 2) {
+    const rawFolder = await c.call('scan_folder_files', { root: tmp, limit: 20 });
+    const files = unwrapItems(rawFolder);
+    if (!files || files.length < 2) {
       throw new Error(`scan_folder_files expected >=2 files, got ${files?.length}`);
     }
     if (!files.some((f) => String(f.path).toLowerCase() === bigPath.toLowerCase())) {
@@ -24,21 +31,28 @@ const { createClient } = require('./smoke-lib');
     if (files[0].sizeBytes < files[1].sizeBytes) {
       throw new Error('scan_folder_files not size-sorted');
     }
+    if (rawFolder && rawFolder.stats && typeof rawFolder.stats.scannedFiles !== 'number') {
+      throw new Error('scan_folder_files stats.scannedFiles missing');
+    }
     console.log('SMOKE OK: scan_folder_files', files.length, 'top=', files[0].path, files[0].sizeBytes);
 
     const drives = await c.call('list_drives', { includeNetworkOptical: false });
     const drive = (drives || []).find((d) => d.isFixed) || drives?.[0];
     if (!drive?.name) throw new Error('no drive for scan_largest_folders');
 
-    const folders = await c.call('scan_largest_folders', {
+    const rawFolders = await c.call('scan_largest_folders', {
       drives: [drive.name],
       limit: 15,
     });
-    if (!Array.isArray(folders) || folders.length < 1) {
+    const folders = unwrapItems(rawFolders);
+    if (!folders || folders.length < 1) {
       throw new Error('scan_largest_folders returned no folders');
     }
     if (!folders.every((f) => f.isDirectory)) {
       throw new Error('scan_largest_folders entries must be directories');
+    }
+    if (rawFolders && rawFolders.stats && typeof rawFolders.stats.scannedFiles !== 'number') {
+      throw new Error('scan_largest_folders stats.scannedFiles missing');
     }
     console.log(
       'SMOKE OK: scan_largest_folders',

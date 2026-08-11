@@ -6,6 +6,10 @@ public static class Security
 {
     private static readonly string[] ProtectedRoots = BuildProtectedRoots();
 
+    /// <summary>
+    /// Soft-protected exact roots: block deletes / mutation. UserProfile is scannable on drive
+    /// walks; Program Files is scannable only when the caller opts in via includeProgramFiles.
+    /// </summary>
     private static readonly HashSet<string> ProtectedExact = new(StringComparer.OrdinalIgnoreCase)
     {
         Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
@@ -71,8 +75,8 @@ public static class Security
     }
 
     /// <summary>
-    /// Windows / system trees that must never be scanned or deleted via folder pick.
-    /// User profile and Program Files are intentionally excluded (soft / opt-in).
+    /// Windows / System32 / WindowsApps trees that must never be scanned or deleted.
+    /// User profile and Program Files are soft-protected (not hard).
     /// </summary>
     public static bool IsHardProtectedPath(string canonicalPath)
     {
@@ -110,6 +114,37 @@ public static class Security
     {
         if (IsHardProtectedPath(canonicalRoot))
             throw new InvalidOperationException($"Refusing to scan protected system path: {canonicalRoot}");
+    }
+
+    /// <summary>True when path is the current user's profile root (soft-protected for deletes).</summary>
+    public static bool IsUserProfileRoot(string canonicalPath)
+    {
+        var profile = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+        if (string.IsNullOrEmpty(profile))
+            return false;
+        return string.Equals(
+            canonicalPath.TrimEnd('\\'),
+            profile.TrimEnd('\\'),
+            StringComparison.OrdinalIgnoreCase);
+    }
+
+    /// <summary>True when path is Program Files or Program Files (x86) root.</summary>
+    public static bool IsProgramFilesRoot(string canonicalPath)
+    {
+        var trimmed = canonicalPath.TrimEnd('\\');
+        foreach (var root in new[]
+                 {
+                     Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles),
+                     Environment.GetFolderPath(Environment.SpecialFolder.ProgramFilesX86),
+                 })
+        {
+            if (string.IsNullOrEmpty(root))
+                continue;
+            if (string.Equals(trimmed, root.TrimEnd('\\'), StringComparison.OrdinalIgnoreCase))
+                return true;
+        }
+
+        return false;
     }
 
     public static bool IsUnderAllowedDrives(string canonicalPath, IEnumerable<string> allowedDrives)

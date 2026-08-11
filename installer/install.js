@@ -85,6 +85,17 @@ function writeUninstaller(installDir, exeName) {
   const uninstallPs1 = path.join(installDir, 'Uninstall-CullSpace.ps1');
   const script = `
 $ErrorActionPreference = 'Stop'
+Add-Type -AssemblyName System.Windows.Forms | Out-Null
+$confirm = [System.Windows.Forms.MessageBox]::Show(
+  'Uninstall CullSpace and remove its shortcuts from this PC?',
+  'Uninstall CullSpace',
+  [System.Windows.Forms.MessageBoxButtons]::YesNo,
+  [System.Windows.Forms.MessageBoxIcon]::Warning
+)
+if ($confirm -ne [System.Windows.Forms.DialogResult]::Yes) {
+  Write-Host 'Uninstall cancelled.'
+  exit 0
+}
 $installDir = '${installDir.replace(/'/g, "''")}'
 $desktop = [Environment]::GetFolderPath('Desktop')
 $startMenu = Join-Path $env:APPDATA 'Microsoft\\Windows\\Start Menu\\Programs'

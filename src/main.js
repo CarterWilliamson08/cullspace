@@ -147,6 +147,9 @@ function connectPipe() {
   });
 }
 
+const SCAN_COMMANDS = new Set(['scan_files', 'scan_folder_files', 'scan_largest_folders']);
+const SCAN_TIMEOUT_MS = 30 * 60 * 1000;
+
 function onSocketData(chunk) {
   receiveBuffer += chunk;
   let idx;
@@ -158,6 +161,12 @@ function onSocketData(chunk) {
     try {
       msg = JSON.parse(line);
     } catch {
+      continue;
+    }
+    if (msg.progress) {
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.webContents.send('helper:progress', { id: msg.id, message: msg.progress });
+      }
       continue;
     }
     const waiter = pending.get(msg.id);
@@ -177,10 +186,11 @@ function callHelper(command, payload = {}) {
           return;
         }
         const id = crypto.randomBytes(8).toString('hex');
+        const timeoutMs = SCAN_COMMANDS.has(command) ? SCAN_TIMEOUT_MS : 120000;
         const timer = setTimeout(() => {
           pending.delete(id);
           reject(new Error(`Timeout: ${command}`));
-        }, 120000);
+        }, timeoutMs);
         pending.set(id, {
           resolve: (v) => {
             clearTimeout(timer);
@@ -220,6 +230,7 @@ function callOnSocket(socket, secret, command, payload = {}, timeoutMs = 120000)
           continue;
         }
         if (msg.id !== id) continue;
+        if (msg.progress) continue;
         cleanup();
         if (msg.ok) resolve(msg.result);
         else reject(new Error(msg.error || 'Helper error'));
@@ -244,25 +255,34 @@ function callOnSocket(socket, secret, command, payload = {}, timeoutMs = 120000)
   });
 }
 
-function helperExeForElevation() {
-  if (app.isPackaged) {
-    const resource = packagedHelperPath();
-    if (fs.existsSync(resource)) return resource;
-    throw new Error(`Packaged helper missing for elevation: ${resource}`);
+let elevatedSession = null;
+let elevatedHold = 0;
+
+function closeElevatedSession() {
+  if (!elevatedSession) return;
+  try {
+    elevatedSession.socket.end();
+  } catch {
+    // ignore
   }
-  const published = path.join(__dirname, '..', 'helper', 'publish', 'CullSpace.Helper.exe');
-  if (fs.existsSync(published)) return published;
-  const resource = packagedHelperPath();
-  if (fs.existsSync(resource)) return resource;
-  throw new Error('Self-contained helper not found for elevation. Run: npm run helper:publish');
+  try {
+    elevatedSession.socket.destroy();
+  } catch {
+    // ignore
+  }
+  elevatedSession = null;
 }
 
-async function callElevatedHelper(command, payload = {}) {
+async function openElevatedSession() {
+  if (elevatedSession?.socket && !elevatedSession.socket.destroyed) {
+    return elevatedSession;
+  }
+  closeElevatedSession();
+
   const elevPipe = `cullspace-elev-${process.pid}-${crypto.randomBytes(6).toString('hex')}`;
   const elevSecret = crypto.randomBytes(32).toString('hex');
   const exe = helperExeForElevation();
 
-  // Triggers Windows UAC. User must approve.
   const ps = spawn(
     'powershell.exe',
     [
@@ -283,11 +303,11 @@ async function callElevatedHelper(command, payload = {}) {
     });
   });
 
-  // Poll named pipe until elevated helper is listening.
   let socket = null;
   const started = Date.now();
   while (!socket && Date.now() - started < 60000) {
     try {
+      // eslint-disable-next-line no-await-in-loop
       socket = await new Promise((resolve, reject) => {
         const s = net.createConnection(`\\\\.\\pipe\\${elevPipe}`);
         s.setEncoding('utf8');
@@ -295,24 +315,80 @@ async function callElevatedHelper(command, payload = {}) {
         s.once('error', reject);
       });
     } catch {
+      // eslint-disable-next-line no-await-in-loop
       await new Promise((r) => setTimeout(r, 400));
     }
   }
 
-  if (!socket) throw new Error('Timed out waiting for elevated helper (UAC may have been denied).');
-
-  try {
-    const result = await callOnSocket(socket, elevSecret, command, payload, 180000);
-    // Ask helper to exit cleanly if connected for one shot.
-    try {
-      socket.end();
-    } catch {
-      // ignore
-    }
-    return result;
-  } finally {
-    socket.destroy();
+  if (!socket) {
+    throw new Error('Timed out waiting for elevated helper (UAC may have been denied).');
   }
+
+  socket.on('close', () => {
+    if (elevatedSession?.socket === socket) elevatedSession = null;
+  });
+  socket.on('error', () => {
+    if (elevatedSession?.socket === socket) elevatedSession = null;
+  });
+
+  elevatedSession = { socket, secret: elevSecret };
+  return elevatedSession;
+}
+
+function helperExeForElevation() {
+  if (app.isPackaged) {
+    const resource = packagedHelperPath();
+    if (fs.existsSync(resource)) return resource;
+    throw new Error(`Packaged helper missing for elevation: ${resource}`);
+  }
+  const published = path.join(__dirname, '..', 'helper', 'publish', 'CullSpace.Helper.exe');
+  if (fs.existsSync(published)) return published;
+  const resource = packagedHelperPath();
+  if (fs.existsSync(resource)) return resource;
+  throw new Error('Self-contained helper not found for elevation. Run: npm run helper:publish');
+}
+
+async function callElevatedHelper(command, payload = {}) {
+  const session = await openElevatedSession();
+  try {
+    return await callOnSocket(session.socket, session.secret, command, payload, 180000);
+  } catch (err) {
+    closeElevatedSession();
+    throw err;
+  } finally {
+    if (elevatedHold <= 0) closeElevatedSession();
+  }
+}
+
+function currentInstallDir() {
+  if (app.isPackaged) {
+    return path.dirname(process.execPath);
+  }
+  return path.join(__dirname, '..');
+}
+
+function waitForPid(pid, timeoutMs = 30 * 60 * 1000) {
+  const n = Number(pid);
+  if (!Number.isFinite(n) || n <= 0) {
+    return Promise.reject(new Error('Invalid pid'));
+  }
+  return new Promise((resolve, reject) => {
+    const started = Date.now();
+    const tick = () => {
+      try {
+        process.kill(n, 0);
+      } catch {
+        resolve({ exited: true });
+        return;
+      }
+      if (Date.now() - started >= timeoutMs) {
+        reject(new Error('Timed out waiting for process exit'));
+        return;
+      }
+      setTimeout(tick, 1000);
+    };
+    tick();
+  });
 }
 
 function createWindow() {
@@ -378,6 +454,7 @@ app.whenReady().then(async () => {
 });
 
 app.on('window-all-closed', () => {
+  closeElevatedSession();
   if (helperProcess && !helperProcess.killed) helperProcess.kill();
   if (process.platform !== 'darwin') app.quit();
 });
@@ -389,6 +466,7 @@ ipcMain.handle('helper:call', async (_evt, command, payload) => {
     'scan_files',
     'scan_folder_files',
     'scan_largest_folders',
+    'cancel_scan',
     'list_apps',
     'related_files',
     'related_app',
@@ -404,6 +482,25 @@ ipcMain.handle('helper:call', async (_evt, command, payload) => {
   }
   return callHelper(command, payload || {});
 });
+
+ipcMain.handle('helper:begin-elevated', async () => {
+  elevatedHold += 1;
+  try {
+    await openElevatedSession();
+    return { ok: true };
+  } catch (err) {
+    elevatedHold = Math.max(0, elevatedHold - 1);
+    throw err;
+  }
+});
+
+ipcMain.handle('helper:end-elevated', async () => {
+  elevatedHold = Math.max(0, elevatedHold - 1);
+  if (elevatedHold === 0) closeElevatedSession();
+  return { ok: true };
+});
+
+ipcMain.handle('app:wait-for-pid', async (_evt, pid, timeoutMs) => waitForPid(pid, timeoutMs));
 
 ipcMain.handle('app:open-logs', async () => {
   const logs = path.join(app.getPath('userData'), '..', 'CullSpace', 'logs');
@@ -434,15 +531,26 @@ ipcMain.handle('update:download-and-install', async (_evt, updateInfo) => {
     }
   });
 
-  spawn(setupPath, [], {
-    detached: true,
-    stdio: 'ignore',
-    cwd: path.dirname(setupPath),
-  }).unref();
+  const installDir = currentInstallDir();
+  const setupArgs = ['--silent', '--launch', `--install-dir=${installDir}`];
+
+  const code = await new Promise((resolve, reject) => {
+    const child = spawn(setupPath, setupArgs, {
+      stdio: 'ignore',
+      cwd: path.dirname(setupPath),
+      windowsHide: true,
+    });
+    child.on('error', reject);
+    child.on('exit', (exitCode) => resolve(exitCode));
+  });
+
+  if (code !== 0) {
+    throw new Error(`Silent update Setup exited with code ${code}. CullSpace was not replaced.`);
+  }
 
   setTimeout(() => {
     app.quit();
   }, 400);
 
-  return { setupPath };
+  return { setupPath, installDir };
 });

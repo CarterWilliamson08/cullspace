@@ -30,6 +30,9 @@ public sealed class IpcResponse
 
     [JsonPropertyName("result")]
     public object? Result { get; set; }
+
+    [JsonPropertyName("progress")]
+    public string? Progress { get; set; }
 }
 
 public sealed class DriveInfoDto
@@ -48,6 +51,19 @@ public sealed class FileEntryDto
     public string Name { get; set; } = "";
     public long SizeBytes { get; set; }
     public bool IsDirectory { get; set; }
+}
+
+public sealed class ScanStatsDto
+{
+    public long ScannedFiles { get; set; }
+    public long SkippedProtected { get; set; }
+    public long AccessDenied { get; set; }
+}
+
+public sealed class ScanResultDto
+{
+    public List<FileEntryDto> Items { get; set; } = new();
+    public ScanStatsDto Stats { get; set; } = new();
 }
 
 public sealed class AppEntryDto

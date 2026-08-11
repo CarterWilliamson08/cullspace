@@ -25,6 +25,21 @@ var jsonOptions = new JsonSerializerOptions
     PropertyNameCaseInsensitive = true,
 };
 
+var writeLock = new SemaphoreSlim(1, 1);
+
+async Task WriteLockedAsync(IpcResponse response)
+{
+    await writeLock.WaitAsync();
+    try
+    {
+        await WriteAsync(writer, response, jsonOptions);
+    }
+    finally
+    {
+        writeLock.Release();
+    }
+}
+
 while (server.IsConnected)
 {
     string? line;
@@ -42,7 +57,7 @@ while (server.IsConnected)
 
     if (line.Length > 1_000_000)
     {
-        await WriteAsync(writer, new IpcResponse { Id = "", Ok = false, Error = "Request too large" }, jsonOptions);
+        await WriteLockedAsync(new IpcResponse { Id = "", Ok = false, Error = "Request too large" });
         continue;
     }
 
@@ -53,33 +68,66 @@ while (server.IsConnected)
     }
     catch (Exception ex)
     {
-        await WriteAsync(writer, new IpcResponse { Id = "", Ok = false, Error = $"Invalid JSON: {ex.Message}" }, jsonOptions);
+        await WriteLockedAsync(new IpcResponse { Id = "", Ok = false, Error = $"Invalid JSON: {ex.Message}" });
         continue;
     }
 
     if (req is null)
     {
-        await WriteAsync(writer, new IpcResponse { Id = "", Ok = false, Error = "Empty request" }, jsonOptions);
+        await WriteLockedAsync(new IpcResponse { Id = "", Ok = false, Error = "Empty request" });
         continue;
     }
 
     if (!string.Equals(req.Secret, secret, StringComparison.Ordinal))
     {
-        await WriteAsync(writer, new IpcResponse { Id = req.Id, Ok = false, Error = "Unauthorized" }, jsonOptions);
+        await WriteLockedAsync(new IpcResponse { Id = req.Id, Ok = false, Error = "Unauthorized" });
+        continue;
+    }
+
+    var cmd = req.Command.Trim().ToLowerInvariant();
+    if (IsLongRunningScan(cmd))
+    {
+        var captured = req;
+        _ = Task.Run(async () =>
+        {
+            try
+            {
+                var progress = new Progress<string>(msg =>
+                {
+                    WriteLockedAsync(new IpcResponse
+                    {
+                        Id = captured.Id,
+                        Ok = true,
+                        Progress = msg,
+                    }).GetAwaiter().GetResult();
+                });
+
+                var result = Handle(captured, progress);
+                await WriteLockedAsync(new IpcResponse { Id = captured.Id, Ok = true, Result = result });
+            }
+            catch (Exception ex)
+            {
+                Security.Audit($"CMD fail {captured.Command}: {ex.Message}");
+                await WriteLockedAsync(new IpcResponse { Id = captured.Id, Ok = false, Error = ex.Message });
+            }
+        });
         continue;
     }
 
     try
     {
-        var result = Handle(req);
-        await WriteAsync(writer, new IpcResponse { Id = req.Id, Ok = true, Result = result }, jsonOptions);
+        var result = Handle(req, progress: null);
+        await WriteLockedAsync(new IpcResponse { Id = req.Id, Ok = true, Result = result });
     }
     catch (Exception ex)
     {
         Security.Audit($"CMD fail {req.Command}: {ex.Message}");
-        await WriteAsync(writer, new IpcResponse { Id = req.Id, Ok = false, Error = ex.Message }, jsonOptions);
+        await WriteLockedAsync(new IpcResponse { Id = req.Id, Ok = false, Error = ex.Message });
     }
 }
+
+static bool IsLongRunningScan(string cmd) =>
+    cmd is "scan_files" or "scan_folder_files" or "scan_largest_folders";
 
 static NamedPipeServerStream CreatePipe(string pipeName)
 {
@@ -100,7 +148,7 @@ static NamedPipeServerStream CreatePipe(string pipeName)
         security);
 }
 
-static object Handle(IpcRequest req)
+static object Handle(IpcRequest req, IProgress<string>? progress)
 {
     var cmd = req.Command.Trim().ToLowerInvariant();
     var payload = req.Payload ?? new Dictionary<string, object?>();
@@ -112,15 +160,19 @@ static object Handle(IpcRequest req)
         "scan_files" => Services.ScanLargestFiles(
             GetStringArray(payload, "drives"),
             GetInt(payload, "limit", 100),
-            null),
+            progress,
+            GetBool(payload, "includeProgramFiles")),
         "scan_folder_files" => Services.ScanFolderFiles(
             GetString(payload, "root"),
             GetInt(payload, "limit", 100),
-            null),
+            progress),
         "scan_largest_folders" => Services.ScanLargestFolders(
             GetStringArray(payload, "drives"),
             GetInt(payload, "limit", 100),
-            null),
+            progress,
+            GetBool(payload, "includeProgramFiles"),
+            GetBool(payload, "dedupeDeepest")),
+        "cancel_scan" => Services.RequestCancelScan(),
         "list_apps" => Services.ListInstalledApps(),
         "related_files" => Services.FindRelatedForFile(
             GetString(payload, "path"),

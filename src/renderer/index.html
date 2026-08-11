@@ -46,14 +46,22 @@
             <input id="includeNetwork" type="checkbox" />
             Include network / optical
           </label>
+          <label class="check">
+            <input id="includeProgramFiles" type="checkbox" />
+            Include Program Files
+          </label>
+          <label class="check" id="dedupeFoldersWrap">
+            <input id="dedupeDeepest" type="checkbox" checked />
+            Unique folder savings
+          </label>
         </div>
         <div id="driveList" class="drive-list"></div>
       </section>
 
       <nav class="tabstrip" role="tablist">
-        <button class="tab active" data-tab="files" type="button" role="tab">Largest files</button>
-        <button class="tab" data-tab="folders" type="button" role="tab">Folders</button>
-        <button class="tab" data-tab="apps" type="button" role="tab">Installed apps</button>
+        <button class="tab active" data-tab="files" type="button" role="tab" aria-selected="true">Largest files</button>
+        <button class="tab" data-tab="folders" type="button" role="tab" aria-selected="false">Folders</button>
+        <button class="tab" data-tab="apps" type="button" role="tab" aria-selected="false">Installed apps</button>
         <span id="tabInk" class="tab-ink"></span>
       </nav>
 
@@ -67,9 +75,15 @@
           <button id="btnScanFiles" class="primary" type="button">Scan</button>
           <span id="scanStatus" class="status"></span>
         </div>
+        <div id="fileSelectionBar" class="pane-toolbar selection-bar hidden">
+          <span id="fileSelectionCount" class="selection-count">0 selected</span>
+          <button type="button" id="btnClearFileSelection">Clear</button>
+          <button type="button" class="danger" id="btnRemoveSelectedFiles">Remove selected…</button>
+        </div>
         <div class="list-head files-head">
+          <label class="col-check" title="Select all"><input type="checkbox" id="fileSelectAll" /></label>
           <span>Name</span>
-          <span>Size</span>
+          <span class="col-size">Size</span>
           <span></span>
         </div>
         <div id="fileResults" class="list-body"></div>
@@ -78,11 +92,11 @@
       <section id="foldersPane" class="content-pane hidden">
         <div class="pane-toolbar folders-mode-bar">
           <div class="segmented folders-mode" role="group" aria-label="Folders mode">
-            <button type="button" data-folders-mode="files" class="active">Files in folder</button>
-            <button type="button" data-folders-mode="folders">Large folders</button>
+            <button type="button" data-folders-mode="files">Files in folder</button>
+            <button type="button" data-folders-mode="folders" class="active">Large folders</button>
           </div>
         </div>
-        <div id="foldersFilesToolbar" class="pane-toolbar">
+        <div id="foldersFilesToolbar" class="pane-toolbar hidden">
           <input id="folderRoot" class="field grow" type="text" placeholder="Choose a folder to scan" readonly />
           <button id="btnBrowseFolder" type="button">Browse…</button>
           <label class="label-inline">
@@ -92,7 +106,7 @@
           <button id="btnScanFolderFiles" class="primary" type="button">Scan folder</button>
           <span id="folderFilesStatus" class="status"></span>
         </div>
-        <div id="foldersDirsToolbar" class="pane-toolbar hidden">
+        <div id="foldersDirsToolbar" class="pane-toolbar">
           <span class="toolbar-hint">Uses selected drives above</span>
           <label class="label-inline">
             Limit
@@ -101,9 +115,15 @@
           <button id="btnScanLargeFolders" class="primary" type="button">Scan folders</button>
           <span id="folderDirsStatus" class="status"></span>
         </div>
+        <div id="folderSelectionBar" class="pane-toolbar selection-bar hidden">
+          <span id="folderSelectionCount" class="selection-count">0 selected</span>
+          <button type="button" id="btnClearFolderSelection">Clear</button>
+          <button type="button" class="danger" id="btnRemoveSelectedFolders">Remove selected…</button>
+        </div>
         <div class="list-head files-head">
+          <label class="col-check" title="Select all"><input type="checkbox" id="folderSelectAll" /></label>
           <span>Name</span>
-          <span>Size</span>
+          <span class="col-size">Size</span>
           <span></span>
         </div>
         <div id="folderResults" class="list-body"></div>
@@ -115,9 +135,15 @@
           <button id="btnLoadApps" class="primary" type="button">Load apps</button>
           <span id="appStatus" class="status"></span>
         </div>
+        <div id="appSelectionBar" class="pane-toolbar selection-bar hidden">
+          <span id="appSelectionCount" class="selection-count">0 selected</span>
+          <button type="button" id="btnClearAppSelection">Clear</button>
+          <button type="button" class="danger" id="btnUninstallSelectedApps">Uninstall selected…</button>
+        </div>
         <div class="list-head apps-head">
+          <label class="col-check" title="Select all"><input type="checkbox" id="appSelectAll" /></label>
           <span>Application</span>
-          <span>Size</span>
+          <span class="col-size">Size</span>
           <span></span>
         </div>
         <div id="appResults" class="list-body"></div>
