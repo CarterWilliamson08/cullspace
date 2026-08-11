@@ -11,7 +11,7 @@ const root = path.join(__dirname, '..');
 const dist = path.join(root, 'dist');
 const unpacked = path.join(dist, 'win-unpacked');
 const payload = path.join(root, 'installer', 'payload');
-const installerDist = path.join(root, 'dist-installer');
+const installerDist = path.join(root, 'dist-release');
 
 function run(command, args, cwd = root) {
   console.log(`\n> ${command} ${args.join(' ')}`);
@@ -46,6 +46,31 @@ function copyRecursive(src, dest) {
   fs.copyFileSync(src, dest);
 }
 
+/** Mirror src → dest. Prefer robocopy so a locked payload root still updates. */
+function mirrorDir(src, dest) {
+  fs.mkdirSync(dest, { recursive: true });
+  if (process.platform === 'win32') {
+    const result = spawnSync(
+      'robocopy',
+      [src, dest, '/MIR', '/R:2', '/W:1', '/NFL', '/NDL', '/NJH', '/NJS', '/NC', '/NS', '/NP'],
+      { cwd: root, stdio: 'inherit', shell: true }
+    );
+    // robocopy: 0–7 = success with varying copy counts
+    const code = result.status == null ? 1 : result.status;
+    if (code >= 8) {
+      console.error('robocopy failed with code', code);
+      process.exit(1);
+    }
+    return;
+  }
+  try {
+    rmrf(dest);
+  } catch {
+    // fall through to overlay copy
+  }
+  copyRecursive(src, dest);
+}
+
 // Sync icons into installer assets
 fs.mkdirSync(path.join(root, 'installer', 'assets'), { recursive: true });
 fs.copyFileSync(path.join(root, 'assets', 'icon.png'), path.join(root, 'installer', 'assets', 'icon.png'));
@@ -70,8 +95,8 @@ if (!fs.existsSync(unpacked)) {
 }
 
 console.log('Staging installer payload…');
-rmrf(payload);
-copyRecursive(unpacked, payload);
+mirrorDir(unpacked, payload);
+fs.mkdirSync(path.join(payload, 'resources'), { recursive: true });
 fs.copyFileSync(
   path.join(root, 'assets', 'cullspace.ico'),
   path.join(payload, 'resources', 'cullspace.ico')
@@ -79,6 +104,14 @@ fs.copyFileSync(
 
 console.log('Installing Setup build deps…');
 const installerDir = path.join(root, 'installer');
+const rootPkg = JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8'));
+const installerPkgPath = path.join(installerDir, 'package.json');
+const installerPkg = JSON.parse(fs.readFileSync(installerPkgPath, 'utf8'));
+if (installerPkg.version !== rootPkg.version) {
+  installerPkg.version = rootPkg.version;
+  fs.writeFileSync(installerPkgPath, `${JSON.stringify(installerPkg, null, 2)}\n`, 'utf8');
+  console.log(`Synced installer version to ${rootPkg.version}`);
+}
 run('npm', ['install', '--no-fund', '--no-audit'], installerDir);
 // Ensure electron binary is present even if install scripts are gated.
 const electronInstall = path.join(installerDir, 'node_modules', 'electron', 'install.js');

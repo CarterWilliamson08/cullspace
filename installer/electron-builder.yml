@@ -2,7 +2,7 @@ appId: com.cullspace.setup
 productName: CullSpaceSetup
 copyright: Copyright © CullSpace
 directories:
-  output: ../dist-installer
+  output: ../dist-release
   buildResources: assets
 files:
   - main.js
