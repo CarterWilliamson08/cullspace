@@ -532,7 +532,22 @@ ipcMain.handle('update:download-and-install', async (_evt, updateInfo) => {
   });
 
   const installDir = currentInstallDir();
-  const setupArgs = ['--silent', '--launch', `--install-dir=${installDir}`];
+  const setupArgs = [
+    '--silent',
+    '--launch',
+    `--install-dir=${installDir}`,
+    `--wait-pid=${process.pid}`,
+  ];
+
+  // Release helper locks before Setup's deferred apply swaps the install dir.
+  closeElevatedSession();
+  if (helperProcess && !helperProcess.killed) {
+    try {
+      helperProcess.kill();
+    } catch {
+      // ignore
+    }
+  }
 
   const code = await new Promise((resolve, reject) => {
     const child = spawn(setupPath, setupArgs, {

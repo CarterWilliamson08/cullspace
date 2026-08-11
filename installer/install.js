@@ -1,4 +1,5 @@
 const path = require('path');
+const os = require('os');
 const { spawn, execFile } = require('child_process');
 const { promisify } = require('util');
 
@@ -27,6 +28,36 @@ function ensureDir(dir) {
 
 function rmrf(target) {
   fs.rmSync(target, { recursive: true, force: true });
+}
+
+function isBusyError(err) {
+  const code = err?.code || '';
+  const msg = err?.message || String(err);
+  return code === 'EBUSY' || code === 'EPERM' || /EBUSY|EPERM|resource busy|locked/i.test(msg);
+}
+
+function waitForPid(pid, timeoutMs = 5 * 60 * 1000) {
+  const n = Number(pid);
+  if (!Number.isFinite(n) || n <= 0) {
+    return Promise.resolve({ exited: true, skipped: true });
+  }
+  return new Promise((resolve, reject) => {
+    const started = Date.now();
+    const tick = () => {
+      try {
+        process.kill(n, 0);
+      } catch {
+        resolve({ exited: true });
+        return;
+      }
+      if (Date.now() - started >= timeoutMs) {
+        reject(new Error(`Timed out waiting for pid ${n} to exit`));
+        return;
+      }
+      setTimeout(tick, 400);
+    };
+    tick();
+  });
 }
 
 function isAsarArchive(filePath) {
@@ -121,59 +152,8 @@ Write-Host 'CullSpace has been uninstalled.'
   return { uninstallPs1, uninstallCmd, exeName };
 }
 
-async function installApp({ resourcesPath, installDir, onProgress }) {
-  const payload = payloadRoot(resourcesPath);
-  if (!fs.existsSync(payload)) {
-    throw new Error(`Install payload missing at ${payload}`);
-  }
-  if (!installDir || typeof installDir !== 'string') {
-    throw new Error('Install directory is required');
-  }
-
-  const total = Math.max(1, countFiles(payload));
-  let done = 0;
-
-  if (fs.existsSync(installDir)) {
-    // Keep a clean install folder
-    rmrf(installDir);
-  }
-  ensureDir(installDir);
-
-  copyRecursive(payload, installDir, () => {
-    done += 1;
-    onProgress?.({
-      phase: 'copy',
-      percent: Math.min(92, Math.round((done / total) * 92)),
-      message: 'Copying application files…',
-    });
-  });
-
-  const exeName = fs.existsSync(path.join(installDir, 'CullSpace.exe'))
-    ? 'CullSpace.exe'
-    : fs.readdirSync(installDir).find((f) => f.toLowerCase().endsWith('.exe'));
-  if (!exeName) throw new Error('Installed payload has no CullSpace.exe');
-
-  const exePath = path.join(installDir, exeName);
-  const altIcons = [
-    path.join(installDir, 'resources', 'cullspace.ico'),
-    path.join(resourcesPath, 'app-payload', 'resources', 'cullspace.ico'),
-    exePath,
-  ];
-  let icon = exePath;
-  for (const candidate of altIcons) {
-    if (fs.existsSync(candidate)) {
-      icon = candidate;
-      break;
-    }
-  }
-
-  onProgress?.({ phase: 'shortcuts', percent: 94, message: 'Creating shortcuts…' });
-
-  const desktop = path.join(
-    process.env.USERPROFILE || '',
-    'Desktop',
-    'CullSpace.lnk'
-  );
+async function createAppShortcuts({ installDir, exePath, icon }) {
+  const desktop = path.join(process.env.USERPROFILE || '', 'Desktop', 'CullSpace.lnk');
   const startMenuDir = path.join(
     process.env.APPDATA || '',
     'Microsoft',
@@ -201,7 +181,7 @@ async function installApp({ resourcesPath, installDir, onProgress }) {
     description: 'CullSpace',
   });
 
-  const { uninstallCmd } = writeUninstaller(installDir, exeName);
+  const { uninstallCmd } = writeUninstaller(installDir, path.basename(exePath));
   const uninstallShortcut = path.join(startMenuDir, 'Uninstall CullSpace.lnk');
   await createShortcut({
     target: uninstallCmd,
@@ -212,7 +192,171 @@ async function installApp({ resourcesPath, installDir, onProgress }) {
     description: 'Uninstall CullSpace',
   });
 
-  // Persist install marker
+  return { desktop, startMenu, uninstallShortcut };
+}
+
+function resolveInstalledExe(installDir) {
+  const exeName = fs.existsSync(path.join(installDir, 'CullSpace.exe'))
+    ? 'CullSpace.exe'
+    : fs.readdirSync(installDir).find((f) => f.toLowerCase().endsWith('.exe'));
+  if (!exeName) throw new Error('Installed payload has no CullSpace.exe');
+  return { exeName, exePath: path.join(installDir, exeName) };
+}
+
+function resolveIcon(installDir, resourcesPath, exePath) {
+  const altIcons = [
+    path.join(installDir, 'resources', 'cullspace.ico'),
+    path.join(resourcesPath, 'app-payload', 'resources', 'cullspace.ico'),
+    exePath,
+  ];
+  for (const candidate of altIcons) {
+    if (fs.existsSync(candidate)) return candidate;
+  }
+  return exePath;
+}
+
+function cleanupStaleUpdateDirs(installDir) {
+  const parent = path.dirname(installDir);
+  const prefix = `${path.basename(installDir)}.update-`;
+  try {
+    for (const entry of fs.readdirSync(parent)) {
+      if (!entry.startsWith(prefix)) continue;
+      try {
+        rmrf(path.join(parent, entry));
+      } catch {
+        // ignore locked leftovers
+      }
+    }
+  } catch {
+    // ignore
+  }
+}
+
+function auditDeferred(message) {
+  try {
+    const dir = path.join(process.env.LOCALAPPDATA || os.tmpdir(), 'CullSpace', 'logs');
+    fs.mkdirSync(dir, { recursive: true });
+    const logPath = path.join(dir, `setup-${new Date().toISOString().slice(0, 10)}.log`);
+    fs.appendFileSync(logPath, `${new Date().toISOString()} ${message}\n`, 'utf8');
+  } catch {
+    // best-effort
+  }
+}
+
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function replaceInstallDir(stagingDir, installDir, attempts = 60) {
+  for (let i = 0; i < attempts; i += 1) {
+    try {
+      if (fs.existsSync(installDir)) rmrf(installDir);
+      fs.renameSync(stagingDir, installDir);
+      return;
+    } catch (err) {
+      if (i === attempts - 1) throw err;
+      await sleep(500);
+    }
+  }
+}
+
+/**
+ * Waits for the live app to exit, then swaps staging → installDir and finalizes.
+ */
+async function runDeferredApply({ stagingDir, installDir, launch, waitPid }) {
+  auditDeferred(`deferred apply start → ${installDir}`);
+  if (!stagingDir || !installDir) {
+    throw new Error('Deferred apply requires stagingDir and installDir');
+  }
+  if (waitPid) {
+    auditDeferred(`deferred waiting for pid ${waitPid}`);
+    await waitForPid(waitPid);
+  }
+  // Brief grace so helper handles release after the UI process exits.
+  await sleep(750);
+
+  if (!fs.existsSync(stagingDir)) {
+    throw new Error(`Deferred staging missing at ${stagingDir}`);
+  }
+
+  await replaceInstallDir(stagingDir, installDir);
+  auditDeferred(`deferred apply swapped → ${installDir}`);
+
+  const { exePath } = resolveInstalledExe(installDir);
+  const icon = resolveIcon(installDir, '', exePath);
+  await createAppShortcuts({ installDir, exePath, icon });
+
+  if (launch) {
+    launchApp(exePath);
+    auditDeferred(`deferred launch → ${exePath}`);
+  }
+  auditDeferred('deferred apply ok');
+  return { installDir, exePath };
+}
+
+/**
+ * Stage a new install beside the live folder, then swap after CullSpace exits.
+ * Required for silent updates: Setup cannot rmdir the running app's install dir.
+ */
+function scheduleDeferredReplace({ stagingDir, installDir, launch, waitPid }) {
+  const args = [
+    '--apply-update',
+    `--staging-dir=${stagingDir}`,
+    `--install-dir=${installDir}`,
+  ];
+  if (launch) args.push('--launch');
+  if (waitPid) args.push(`--wait-pid=${waitPid}`);
+
+  let command = process.execPath;
+  let spawnArgs = args;
+
+  // Under plain Node (smokes / direct require), relaunch apply-update.js.
+  // Under Electron Setup, relaunch this same executable with --apply-update.
+  if (!process.versions.electron) {
+    spawnArgs = [path.join(__dirname, 'apply-update.js'), ...args];
+  }
+
+  const child = spawn(command, spawnArgs, {
+    detached: true,
+    stdio: 'ignore',
+    windowsHide: true,
+    env: process.env,
+  });
+  child.unref();
+  return { deferred: true, applyPid: child.pid || null };
+}
+
+async function installApp({ resourcesPath, installDir, onProgress, skipShortcuts = false }) {
+  const payload = payloadRoot(resourcesPath);
+  if (!fs.existsSync(payload)) {
+    throw new Error(`Install payload missing at ${payload}`);
+  }
+  if (!installDir || typeof installDir !== 'string') {
+    throw new Error('Install directory is required');
+  }
+
+  const total = Math.max(1, countFiles(payload));
+  let done = 0;
+
+  if (fs.existsSync(installDir)) {
+    // Keep a clean install folder
+    rmrf(installDir);
+  }
+  ensureDir(installDir);
+
+  copyRecursive(payload, installDir, () => {
+    done += 1;
+    onProgress?.({
+      phase: 'copy',
+      percent: Math.min(92, Math.round((done / total) * 92)),
+      message: 'Copying application files…',
+    });
+  });
+
+  const { exeName, exePath } = resolveInstalledExe(installDir);
+  const icon = resolveIcon(installDir, resourcesPath, exePath);
+
+  // Persist install marker before shortcuts so a deferred swap still has metadata.
   fs.writeFileSync(
     path.join(installDir, 'install.json'),
     JSON.stringify(
@@ -226,9 +370,51 @@ async function installApp({ resourcesPath, installDir, onProgress }) {
     ),
     'utf8'
   );
+  writeUninstaller(installDir, exeName);
+
+  let desktop = null;
+  let startMenu = null;
+  if (!skipShortcuts) {
+    onProgress?.({ phase: 'shortcuts', percent: 94, message: 'Creating shortcuts…' });
+    ({ desktop, startMenu } = await createAppShortcuts({ installDir, exePath, icon }));
+  }
 
   onProgress?.({ phase: 'done', percent: 100, message: 'Installation complete' });
-  return { installDir, exePath, desktop, startMenu };
+  return { installDir, exePath, desktop, startMenu, icon };
+}
+
+async function installAppDeferred({ resourcesPath, installDir, onProgress, launch, waitPid }) {
+  cleanupStaleUpdateDirs(installDir);
+  const stagingDir = `${installDir}.update-${process.pid}`;
+  if (fs.existsSync(stagingDir)) rmrf(stagingDir);
+
+  const staged = await installApp({
+    resourcesPath,
+    installDir: stagingDir,
+    onProgress,
+    skipShortcuts: true,
+  });
+
+  const scheduled = scheduleDeferredReplace({
+    stagingDir,
+    installDir,
+    launch: Boolean(launch),
+    waitPid,
+  });
+
+  onProgress?.({
+    phase: 'deferred',
+    percent: 100,
+    message: 'Update staged — applying after CullSpace exits…',
+  });
+
+  return {
+    installDir,
+    stagingDir,
+    exePath: path.join(installDir, path.basename(staged.exePath)),
+    deferred: true,
+    ...scheduled,
+  };
 }
 
 function launchApp(exePath) {
@@ -243,5 +429,9 @@ module.exports = {
   defaultInstallDir,
   payloadRoot,
   installApp,
+  installAppDeferred,
+  runDeferredApply,
   launchApp,
+  waitForPid,
+  isBusyError,
 };

@@ -57,13 +57,13 @@ npm run installer:fast
 
 - Default install: `%LOCALAPPDATA%\Programs\CullSpace`
 - Desktop + Start Menu shortcuts, plus **Uninstall CullSpace**
-- Silent flags: `--silent`, `--launch`, `--install-dir=<path>`
+- Silent flags: `--silent`, `--launch`, `--install-dir=<path>`, `--wait-pid=<pid>`
 - Unsigned builds may hit SmartScreen (“More info” → “Run anyway”)
 
 ## Auto-update
 On launch (and via **Help / Settings → Check for updates…**):
 
-- **Update Now** — downloads Setup, runs it silently with `--install-dir=<current>`, waits for exit, then quits
+- **Update Now** — downloads Setup, runs it silently with `--install-dir=<current> --wait-pid=<pid>`; Setup stages files beside the live install, exits 0, then swaps after CullSpace quits and relaunches
 - **Remind me later** — session dismiss
 - **Skip this version** — persists so that version won’t prompt again
 

@@ -32,9 +32,13 @@ assert(renderer.includes('waitForUninstallerOrUser'), 'leftover wait helper miss
 assert(preload.includes('waitForPid'), 'preload waitForPid missing');
 assert(main.includes('app:wait-for-pid'), 'wait-for-pid IPC missing');
 assert(main.includes('--install-dir='), 'silent update install-dir missing');
+assert(main.includes('--wait-pid='), 'silent update wait-pid missing');
 assert(main.includes('Silent update Setup exited'), 'silent update failure handling missing');
+assert(install.includes('installAppDeferred'), 'deferred silent replace missing');
+assert(install.includes('scheduleDeferredReplace'), 'deferred apply scheduler missing');
 assert(renderer.includes('skipUpdateVersion') || renderer.includes('Skip this version'), 'skip version missing');
 assert(install.includes('MessageBox'), 'self-uninstall confirm missing');
 assert(silent.includes('--install-dir='), 'silent-setup smoke still covers install-dir');
+assert(silent.includes('--wait-pid='), 'silent-setup smoke covers wait-pid');
 
 console.log('SMOKE OK: ops reliability wiring');

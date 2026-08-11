@@ -33,5 +33,5 @@
 - Optional read-only token may be embedded at package time via `CULLSPACE_GH_TOKEN` → `resources/update-config.json` (gitignored; never commit secrets).
 - Downloads only assets matching `CullSpace-Setup-*.exe`.
 - User must confirm **Update Now** before download/install.
-- Silent Setup is launched with `--silent --launch --install-dir=<current install dir>`; the app waits for Setup exit and keeps running if Setup fails.
+- Silent Setup is launched with `--silent --launch --install-dir=<current> --wait-pid=<pid>`. Existing installs are staged beside the live folder and swapped after CullSpace exits (avoids EBUSY while files are locked). The app waits for Setup exit and keeps running if staging fails.
 - **Skip this version** persists a dismissed version in localStorage.

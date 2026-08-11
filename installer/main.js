@@ -1,7 +1,15 @@
 const { app, BrowserWindow, ipcMain, shell } = require('electron');
 const path = require('path');
 const fs = require('fs');
-const { defaultInstallDir, installApp, launchApp } = require('./install');
+const {
+  defaultInstallDir,
+  installApp,
+  installAppDeferred,
+  runDeferredApply,
+  launchApp,
+  waitForPid,
+  isBusyError,
+} = require('./install');
 
 let mainWindow = null;
 
@@ -10,12 +18,21 @@ function parseSetupArgs(argv) {
     silent: false,
     launch: false,
     installDir: null,
+    waitPid: null,
+    applyUpdate: false,
+    stagingDir: null,
   };
   for (const raw of argv.slice(1)) {
     if (raw === '--silent') args.silent = true;
     else if (raw === '--launch') args.launch = true;
+    else if (raw === '--apply-update') args.applyUpdate = true;
     else if (raw.startsWith('--install-dir=')) {
       args.installDir = raw.slice('--install-dir='.length).trim() || null;
+    } else if (raw.startsWith('--staging-dir=')) {
+      args.stagingDir = raw.slice('--staging-dir='.length).trim() || null;
+    } else if (raw.startsWith('--wait-pid=')) {
+      const n = Number(raw.slice('--wait-pid='.length).trim());
+      args.waitPid = Number.isFinite(n) && n > 0 ? n : null;
     }
   }
   return args;
@@ -35,21 +52,57 @@ function auditSilent(message) {
 async function runSilentInstall(opts) {
   const installDir = opts.installDir || defaultInstallDir();
   auditSilent(`silent install start → ${installDir}`);
-  const result = await installApp({
-    resourcesPath: process.resourcesPath,
-    installDir,
-    onProgress: (progress) => {
-      if (progress?.message) {
-        process.stdout.write(`[setup] ${progress.percent || 0}% ${progress.message}\n`);
-      }
-    },
-  });
-  auditSilent(`silent install ok → ${result.exePath}`);
-  if (opts.launch) {
-    launchApp(result.exePath);
-    auditSilent(`silent launch → ${result.exePath}`);
+
+  const onProgress = (progress) => {
+    if (progress?.message) {
+      process.stdout.write(`[setup] ${progress.percent || 0}% ${progress.message}\n`);
+    }
+  };
+
+  // Updating an existing install cannot delete the live folder while CullSpace
+  // (or an older updater waiting on Setup) still holds locks — stage + swap.
+  // Do not wait for --wait-pid in-process here: the running app may be blocked
+  // on Setup's exit code. The deferred apply script waits after we exit 0.
+  if (fs.existsSync(installDir)) {
+    const result = await installAppDeferred({
+      resourcesPath: process.resourcesPath,
+      installDir,
+      onProgress,
+      launch: opts.launch,
+      waitPid: opts.waitPid,
+    });
+    auditSilent(`silent install deferred → ${result.stagingDir}`);
+    return result;
   }
-  return result;
+
+  if (opts.waitPid) {
+    auditSilent(`waiting for pid ${opts.waitPid}`);
+    await waitForPid(opts.waitPid);
+  }
+
+  try {
+    const result = await installApp({
+      resourcesPath: process.resourcesPath,
+      installDir,
+      onProgress,
+    });
+    auditSilent(`silent install ok → ${result.exePath}`);
+    if (opts.launch) {
+      launchApp(result.exePath);
+      auditSilent(`silent launch → ${result.exePath}`);
+    }
+    return result;
+  } catch (err) {
+    if (!isBusyError(err)) throw err;
+    auditSilent(`silent install busy → falling back to deferred (${err.message || err})`);
+    return installAppDeferred({
+      resourcesPath: process.resourcesPath,
+      installDir,
+      onProgress,
+      launch: opts.launch,
+      waitPid: opts.waitPid,
+    });
+  }
 }
 
 function createWindow() {
@@ -67,7 +120,6 @@ function createWindow() {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,
       nodeIntegration: false,
-      sandbox: true,
     },
   });
 
@@ -76,6 +128,25 @@ function createWindow() {
 
 app.whenReady().then(async () => {
   const opts = parseSetupArgs(process.argv);
+
+  if (opts.applyUpdate) {
+    try {
+      await runDeferredApply({
+        stagingDir: opts.stagingDir,
+        installDir: opts.installDir || defaultInstallDir(),
+        launch: opts.launch,
+        waitPid: opts.waitPid,
+      });
+      app.exit(0);
+    } catch (err) {
+      const msg = err?.message || String(err);
+      console.error('Deferred apply failed:', msg);
+      auditSilent(`deferred apply FAIL → ${msg}`);
+      app.exit(1);
+    }
+    return;
+  }
+
   if (opts.silent) {
     try {
       await runSilentInstall(opts);

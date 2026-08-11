@@ -45,12 +45,21 @@ function cleanupShortcuts() {
   assert(installerMain.includes('--silent'), 'installer main missing --silent');
   assert(installerMain.includes('--launch'), 'installer main missing --launch');
   assert(installerMain.includes('--install-dir='), 'installer main missing --install-dir');
+  assert(installerMain.includes('--wait-pid='), 'installer main missing --wait-pid');
   assert(installerMain.includes('runSilentInstall'), 'installer main missing runSilentInstall');
+  assert(installerMain.includes('installAppDeferred'), 'installer main missing deferred install');
+
+  const installerInstall = fs.readFileSync(path.join(root, 'installer', 'install.js'), 'utf8');
+  assert(installerInstall.includes('scheduleDeferredReplace'), 'installer missing deferred replace');
+  assert(installerInstall.includes('installAppDeferred'), 'installer missing installAppDeferred');
+  assert(installerInstall.includes('runDeferredApply'), 'installer missing runDeferredApply');
+  assert(fs.existsSync(path.join(root, 'installer', 'apply-update.js')), 'apply-update.js missing');
 
   const appMain = fs.readFileSync(path.join(root, 'src', 'main.js'), 'utf8');
   assert(appMain.includes("'--silent'"), 'updater missing --silent spawn arg');
   assert(appMain.includes("'--launch'"), 'updater missing --launch spawn arg');
   assert(appMain.includes('--install-dir='), 'updater missing --install-dir spawn arg');
+  assert(appMain.includes('--wait-pid='), 'updater missing --wait-pid spawn arg');
   assert(appMain.includes('currentInstallDir'), 'updater missing currentInstallDir');
   console.log('SMOKE OK: silent Setup + updater wiring');
 
