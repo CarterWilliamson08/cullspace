@@ -113,6 +113,14 @@ static object Handle(IpcRequest req)
             GetStringArray(payload, "drives"),
             GetInt(payload, "limit", 100),
             null),
+        "scan_folder_files" => Services.ScanFolderFiles(
+            GetString(payload, "root"),
+            GetInt(payload, "limit", 100),
+            null),
+        "scan_largest_folders" => Services.ScanLargestFolders(
+            GetStringArray(payload, "drives"),
+            GetInt(payload, "limit", 100),
+            null),
         "list_apps" => Services.ListInstalledApps(),
         "related_files" => Services.FindRelatedForFile(
             GetString(payload, "path"),

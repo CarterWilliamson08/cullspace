@@ -387,6 +387,8 @@ ipcMain.handle('helper:call', async (_evt, command, payload) => {
     'ping',
     'list_drives',
     'scan_files',
+    'scan_folder_files',
+    'scan_largest_folders',
     'list_apps',
     'related_files',
     'related_app',
@@ -412,6 +414,16 @@ ipcMain.handle('app:open-logs', async () => {
 });
 
 ipcMain.handle('app:get-version', async () => app.getVersion());
+
+ipcMain.handle('app:pick-folder', async () => {
+  const { dialog } = require('electron');
+  const result = await dialog.showOpenDialog(mainWindow, {
+    title: 'Choose a folder to scan',
+    properties: ['openDirectory'],
+  });
+  if (result.canceled || !result.filePaths[0]) return null;
+  return result.filePaths[0];
+});
 
 ipcMain.handle('update:check', async () => checkForUpdates());
 

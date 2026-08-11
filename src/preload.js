@@ -4,6 +4,7 @@ contextBridge.exposeInMainWorld('cullspace', {
   call: (command, payload) => ipcRenderer.invoke('helper:call', command, payload),
   openLogs: () => ipcRenderer.invoke('app:open-logs'),
   getVersion: () => ipcRenderer.invoke('app:get-version'),
+  pickFolder: () => ipcRenderer.invoke('app:pick-folder'),
   onOpenSettings: (cb) => {
     const handler = () => cb();
     ipcRenderer.on('menu:settings', handler);

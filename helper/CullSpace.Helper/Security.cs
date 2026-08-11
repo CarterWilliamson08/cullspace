@@ -67,6 +67,23 @@ public static class Security
         if (ProtectedExact.Contains(trimmed))
             return true;
 
+        return IsHardProtectedPath(trimmed);
+    }
+
+    /// <summary>
+    /// Windows / system trees that must never be scanned or deleted via folder pick.
+    /// User profile and Program Files are intentionally excluded (soft / opt-in).
+    /// </summary>
+    public static bool IsHardProtectedPath(string canonicalPath)
+    {
+        var trimmed = canonicalPath.TrimEnd('\\');
+        var windows = Environment.GetFolderPath(Environment.SpecialFolder.Windows);
+        if (!string.IsNullOrEmpty(windows) &&
+            string.Equals(trimmed, windows.TrimEnd('\\'), StringComparison.OrdinalIgnoreCase))
+        {
+            return true;
+        }
+
         foreach (var root in ProtectedRoots)
         {
             var r = Path.GetFullPath(root).TrimEnd('\\') + "\\";
@@ -76,6 +93,23 @@ public static class Security
         }
 
         return false;
+    }
+
+    public static bool IsUnderOrEqual(string path, string ancestor)
+    {
+        var p = Path.GetFullPath(path).TrimEnd('\\') + "\\";
+        var a = Path.GetFullPath(ancestor).TrimEnd('\\') + "\\";
+        return p.StartsWith(a, StringComparison.OrdinalIgnoreCase);
+    }
+
+    /// <summary>
+    /// Explicit folder scan may start at UserProfile / Program Files (or under them).
+    /// Hard system paths are always refused.
+    /// </summary>
+    public static void EnsureFolderScanRootAllowed(string canonicalRoot)
+    {
+        if (IsHardProtectedPath(canonicalRoot))
+            throw new InvalidOperationException($"Refusing to scan protected system path: {canonicalRoot}");
     }
 
     public static bool IsUnderAllowedDrives(string canonicalPath, IEnumerable<string> allowedDrives)

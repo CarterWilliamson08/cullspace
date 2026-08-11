@@ -1,6 +1,6 @@
 {
   "name": "cullspace",
-  "version": "1.0.2",
+  "version": "1.0.3",
   "description": "Scan drives, surface the largest files and apps, and securely remove them.",
   "main": "src/main.js",
   "scripts": {
@@ -10,6 +10,9 @@
     "helper:run": "dotnet run --project helper/CullSpace.Helper/CullSpace.Helper.csproj -c Release",
     "smoke:ping": "node scripts/smoke-ping.js",
     "smoke:scan": "node scripts/smoke-scan.js",
+    "smoke:folder-scan": "node scripts/smoke-folder-scan.js",
+    "smoke:folders-ui": "node scripts/smoke-folders-ui.js",
+    "smoke:delete-confirm": "node scripts/smoke-delete-confirm.js",
     "smoke:apps": "node scripts/smoke-apps.js",
     "smoke:related": "node scripts/smoke-related.js",
     "smoke:delete": "node scripts/smoke-delete.js",

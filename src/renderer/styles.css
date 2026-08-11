@@ -387,6 +387,26 @@ body.theme-animating .drive {
   text-overflow: ellipsis;
 }
 
+.folders-mode-bar {
+  border-bottom: none;
+}
+
+.folders-mode {
+  grid-template-columns: repeat(2, 1fr);
+  min-width: 280px;
+}
+
+.toolbar-hint {
+  color: var(--muted);
+  font-size: 12px;
+  margin-right: auto;
+}
+
+.muted {
+  color: var(--muted);
+  font-weight: 500;
+}
+
 .list-head,
 .item {
   display: grid;

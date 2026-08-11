@@ -5,6 +5,9 @@ const state = {
   selectedDrives: new Set(),
   files: [],
   apps: [],
+  folderResults: [],
+  foldersMode: 'files',
+  folderRoot: '',
   tab: 'files',
   themePreference: localStorage.getItem(THEME_KEY) || 'system',
   pendingUpdate: null,
@@ -334,6 +337,100 @@ function selectedDriveList() {
   return [...state.selectedDrives];
 }
 
+function setFoldersMode(mode) {
+  state.foldersMode = mode === 'folders' ? 'folders' : 'files';
+  document.querySelectorAll('[data-folders-mode]').forEach((btn) => {
+    btn.classList.toggle('active', btn.getAttribute('data-folders-mode') === state.foldersMode);
+  });
+  $('foldersFilesToolbar').classList.toggle('hidden', state.foldersMode !== 'files');
+  $('foldersDirsToolbar').classList.toggle('hidden', state.foldersMode !== 'folders');
+  renderFolderResults();
+}
+
+function renderFolderResults() {
+  const root = $('folderResults');
+  if (!root) return;
+  root.innerHTML = '';
+  const rows = state.folderResults || [];
+  rows.forEach((f, index) => {
+    const row = document.createElement('div');
+    row.className = 'item';
+    row.style.animationDelay = `${Math.min(index, 24) * 28}ms`;
+    const kind = f.isDirectory ? 'Folder' : 'File';
+    row.innerHTML = `
+      <div>
+        <div>${escapeHtml(f.name || f.path)} <span class="muted">· ${kind}</span></div>
+        <div class="path">${escapeHtml(f.path)}</div>
+      </div>
+      <div class="size ${sizeImpactClass(f.sizeBytes)}">${formatBytes(f.sizeBytes)}</div>
+      <button type="button">Remove…</button>
+    `;
+    row.querySelector('button').addEventListener('click', () => previewFileRemove(f));
+    root.appendChild(row);
+  });
+}
+
+async function browseFolderRoot() {
+  if (!window.cullspace.pickFolder) return;
+  const chosen = await window.cullspace.pickFolder();
+  if (!chosen) return;
+  state.folderRoot = chosen;
+  $('folderRoot').value = chosen;
+  $('folderFilesStatus').textContent = 'Folder selected';
+}
+
+async function scanFolderFiles() {
+  const root = ($('folderRoot').value || state.folderRoot || '').trim();
+  if (!root) {
+    $('folderFilesStatus').textContent = 'Choose a folder first.';
+    return;
+  }
+  const limit = Number($('folderFileLimit').value) || 100;
+  showOverlay({ scan: true, html: '<p>Ranking the largest files in the selected folder…</p>' });
+  $('folderFilesStatus').textContent = 'Scanning…';
+  try {
+    state.folderResults = await window.cullspace.call('scan_folder_files', { root, limit });
+    renderFolderResults();
+    $('folderFilesStatus').textContent = `${state.folderResults.length} items`;
+    setStatus('Folder scan complete', root);
+  } catch (err) {
+    $('folderFilesStatus').textContent = 'Scan failed';
+    setStatus('Folder scan failed', err.message);
+    showOverlay({
+      html: `<h3>Folder scan failed</h3><p>${escapeHtml(err.message)}</p><div class="modal-actions"><button id="cancelModal">Close</button></div>`,
+    });
+    $('cancelModal').onclick = hideOverlay;
+    return;
+  }
+  hideOverlay();
+}
+
+async function scanLargeFolders() {
+  const drives = selectedDriveList();
+  if (!drives.length) {
+    $('folderDirsStatus').textContent = 'Select at least one drive.';
+    return;
+  }
+  const limit = Number($('folderDirLimit').value) || 100;
+  showOverlay({ scan: true, html: '<p>Ranking the largest folders on selected drives…</p>' });
+  $('folderDirsStatus').textContent = 'Scanning…';
+  try {
+    state.folderResults = await window.cullspace.call('scan_largest_folders', { drives, limit });
+    renderFolderResults();
+    $('folderDirsStatus').textContent = `${state.folderResults.length} folders`;
+    setStatus('Large folders scan complete', `${state.folderResults.length} folders`);
+  } catch (err) {
+    $('folderDirsStatus').textContent = 'Scan failed';
+    setStatus('Large folders scan failed', err.message);
+    showOverlay({
+      html: `<h3>Folder scan failed</h3><p>${escapeHtml(err.message)}</p><div class="modal-actions"><button id="cancelModal">Close</button></div>`,
+    });
+    $('cancelModal').onclick = hideOverlay;
+    return;
+  }
+  hideOverlay();
+}
+
 async function scanFiles() {
   const drives = selectedDriveList();
   if (!drives.length) {
@@ -403,7 +500,7 @@ async function previewFileRemove(file) {
     showOverlay({
       html: `
         <h3>Remove file and related paths</h3>
-        <p>Type <strong>${escapeHtml(file.name)}</strong> to confirm, then continue to the Windows admin prompt.</p>
+        <p>Type <strong>DELETE</strong> to confirm, then continue to the Windows admin prompt.</p>
         <ul class="preview-list">
           ${related
             .map(
@@ -414,8 +511,8 @@ async function previewFileRemove(file) {
             )
             .join('')}
         </ul>
-        <label class="settings-row">Confirm name
-          <input id="confirmName" class="field" type="text" style="width:100%;margin-top:0.35rem;" />
+        <label class="settings-row">Type DELETE to confirm
+          <input id="confirmName" class="field" type="text" style="width:100%;margin-top:0.35rem;" autocomplete="off" />
         </label>
         <div class="modal-actions">
           <button type="button" id="cancelModal">Cancel</button>
@@ -426,8 +523,8 @@ async function previewFileRemove(file) {
     $('cancelModal').onclick = hideOverlay;
     $('confirmDelete').onclick = async () => {
       const typed = document.getElementById('confirmName').value.trim();
-      if (typed !== file.name) {
-        alert('Confirmation text does not match.');
+      if (typed !== 'DELETE') {
+        alert('Confirmation text does not match. Type DELETE to continue.');
         return;
       }
       if (blocked.length) {
@@ -535,8 +632,8 @@ async function uninstallFlow(app) {
     html: `
       <h3>Uninstall ${escapeHtml(app.name)}</h3>
       <p>Step 1: launch the official uninstaller (UAC may appear). After it finishes, CullSpace will scan leftovers for a second confirmed cleanup.</p>
-      <label class="settings-row">Type <strong>${escapeHtml(app.name)}</strong> to continue
-        <input id="confirmName" class="field" type="text" style="width:100%;margin-top:0.35rem;" />
+      <label class="settings-row">Type <strong>DELETE</strong> to confirm
+        <input id="confirmName" class="field" type="text" style="width:100%;margin-top:0.35rem;" autocomplete="off" />
       </label>
       <div class="modal-actions">
         <button type="button" id="cancelModal">Cancel</button>
@@ -547,8 +644,8 @@ async function uninstallFlow(app) {
   $('cancelModal').onclick = hideOverlay;
   $('confirmUninstall').onclick = async () => {
     const typed = document.getElementById('confirmName').value.trim();
-    if (typed !== app.name) {
-      alert('Confirmation text does not match.');
+    if (typed !== 'DELETE') {
+      alert('Confirmation text does not match. Type DELETE to continue.');
       return;
     }
     showOverlay({ del: true, html: '<p>Starting official uninstaller…</p>' });
@@ -590,8 +687,8 @@ async function leftoverPass(app) {
               : '<li>No leftover paths detected.</li>'
           }
         </ul>
-        <label class="settings-row">Type <strong>CLEAN ${escapeHtml(app.name)}</strong>
-          <input id="confirmName" class="field" type="text" style="width:100%;margin-top:0.35rem;" />
+        <label class="settings-row">Type <strong>DELETE</strong> to confirm
+          <input id="confirmName" class="field" type="text" style="width:100%;margin-top:0.35rem;" autocomplete="off" />
         </label>
         <div class="modal-actions">
           <button type="button" id="cancelModal">Skip leftovers</button>
@@ -602,8 +699,8 @@ async function leftoverPass(app) {
     $('cancelModal').onclick = hideOverlay;
     $('confirmDelete').onclick = async () => {
       const typed = document.getElementById('confirmName').value.trim();
-      if (typed !== `CLEAN ${app.name}`) {
-        alert('Confirmation text does not match.');
+      if (typed !== 'DELETE') {
+        alert('Confirmation text does not match. Type DELETE to continue.');
         return;
       }
       await deletePaths(removable.map((r) => r.path), `Leftovers cleaned for ${app.name}`);
@@ -630,14 +727,21 @@ document.querySelectorAll('.tab').forEach((btn) => {
     document.querySelectorAll('.tab').forEach((b) => b.classList.remove('active'));
     btn.classList.add('active');
     state.tab = btn.dataset.tab;
-    const filesPane = $('filesPane');
-    const appsPane = $('appsPane');
-    filesPane.classList.toggle('hidden', state.tab !== 'files');
-    appsPane.classList.toggle('hidden', state.tab !== 'apps');
-    const pane = state.tab === 'files' ? filesPane : appsPane;
-    pane.classList.remove('switching');
-    void pane.offsetWidth;
-    pane.classList.add('switching');
+    const panes = {
+      files: $('filesPane'),
+      folders: $('foldersPane'),
+      apps: $('appsPane'),
+    };
+    Object.entries(panes).forEach(([key, pane]) => {
+      if (!pane) return;
+      pane.classList.toggle('hidden', state.tab !== key);
+    });
+    const pane = panes[state.tab];
+    if (pane) {
+      pane.classList.remove('switching');
+      void pane.offsetWidth;
+      pane.classList.add('switching');
+    }
     moveTabInk();
   });
 });
@@ -650,6 +754,12 @@ $('btnScanFiles').addEventListener('click', scanFiles);
 $('btnLoadApps').addEventListener('click', loadApps);
 $('fileFilter').addEventListener('input', renderFiles);
 $('appFilter').addEventListener('input', renderApps);
+$('btnBrowseFolder').addEventListener('click', browseFolderRoot);
+$('btnScanFolderFiles').addEventListener('click', scanFolderFiles);
+$('btnScanLargeFolders').addEventListener('click', scanLargeFolders);
+document.querySelectorAll('[data-folders-mode]').forEach((btn) => {
+  btn.addEventListener('click', () => setFoldersMode(btn.getAttribute('data-folders-mode')));
+});
 $('btnLogs').addEventListener('click', () => window.cullspace.openLogs());
 $('btnSettings').addEventListener('click', openSettings);
 $('btnHelp').addEventListener('click', () => {

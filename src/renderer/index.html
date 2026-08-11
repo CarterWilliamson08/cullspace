@@ -52,6 +52,7 @@
 
       <nav class="tabstrip" role="tablist">
         <button class="tab active" data-tab="files" type="button" role="tab">Largest files</button>
+        <button class="tab" data-tab="folders" type="button" role="tab">Folders</button>
         <button class="tab" data-tab="apps" type="button" role="tab">Installed apps</button>
         <span id="tabInk" class="tab-ink"></span>
       </nav>
@@ -72,6 +73,40 @@
           <span></span>
         </div>
         <div id="fileResults" class="list-body"></div>
+      </section>
+
+      <section id="foldersPane" class="content-pane hidden">
+        <div class="pane-toolbar folders-mode-bar">
+          <div class="segmented folders-mode" role="group" aria-label="Folders mode">
+            <button type="button" data-folders-mode="files" class="active">Files in folder</button>
+            <button type="button" data-folders-mode="folders">Large folders</button>
+          </div>
+        </div>
+        <div id="foldersFilesToolbar" class="pane-toolbar">
+          <input id="folderRoot" class="field grow" type="text" placeholder="Choose a folder to scan" readonly />
+          <button id="btnBrowseFolder" type="button">Browse…</button>
+          <label class="label-inline">
+            Limit
+            <input id="folderFileLimit" class="field" type="number" min="10" max="500" value="100" />
+          </label>
+          <button id="btnScanFolderFiles" class="primary" type="button">Scan folder</button>
+          <span id="folderFilesStatus" class="status"></span>
+        </div>
+        <div id="foldersDirsToolbar" class="pane-toolbar hidden">
+          <span class="toolbar-hint">Uses selected drives above</span>
+          <label class="label-inline">
+            Limit
+            <input id="folderDirLimit" class="field" type="number" min="10" max="500" value="100" />
+          </label>
+          <button id="btnScanLargeFolders" class="primary" type="button">Scan folders</button>
+          <span id="folderDirsStatus" class="status"></span>
+        </div>
+        <div class="list-head files-head">
+          <span>Name</span>
+          <span>Size</span>
+          <span></span>
+        </div>
+        <div id="folderResults" class="list-body"></div>
       </section>
 
       <section id="appsPane" class="content-pane hidden">

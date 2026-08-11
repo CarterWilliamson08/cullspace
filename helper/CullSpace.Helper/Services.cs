@@ -43,23 +43,28 @@ public static class Services
         return list;
     }
 
-    public static List<FileEntryDto> ScanLargestFiles(IEnumerable<string> drives, int limit, IProgress<string>? progress = null)
-    {
-        var top = new SortedSet<(long Size, string Path)>(Comparer<(long Size, string Path)>.Create((a, b) =>
+    private static SortedSet<(long Size, string Path)> CreateTopSet() =>
+        new(Comparer<(long Size, string Path)>.Create((a, b) =>
         {
             var c = b.Size.CompareTo(a.Size);
             return c != 0 ? c : string.Compare(a.Path, b.Path, StringComparison.OrdinalIgnoreCase);
         }));
 
-        var skipNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
-        {
-            "Windows", "System Volume Information", "$Recycle.Bin", "Recovery", "PerfLogs",
-        };
+    private static HashSet<string> DefaultSkipDirNames() => new(StringComparer.OrdinalIgnoreCase)
+    {
+        "Windows", "System Volume Information", "$Recycle.Bin", "Recovery", "PerfLogs",
+    };
 
-        var skipFiles = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
-        {
-            "hiberfil.sys", "pagefile.sys", "swapfile.sys", "DumpStack.log.tmp",
-        };
+    private static HashSet<string> DefaultSkipFileNames() => new(StringComparer.OrdinalIgnoreCase)
+    {
+        "hiberfil.sys", "pagefile.sys", "swapfile.sys", "DumpStack.log.tmp",
+    };
+
+    public static List<FileEntryDto> ScanLargestFiles(IEnumerable<string> drives, int limit, IProgress<string>? progress = null)
+    {
+        var top = CreateTopSet();
+        var skipNames = DefaultSkipDirNames();
+        var skipFiles = DefaultSkipFileNames();
 
         foreach (var drive in drives)
         {
@@ -70,7 +75,7 @@ public static class Services
             progress?.Report($"Scanning {root}");
             try
             {
-                EnumerateFilesSafe(root, skipNames, skipFiles, top, limit, progress);
+                EnumerateFilesSafe(root, skipNames, skipFiles, top, limit, progress, allowUnderRoot: null);
             }
             catch
             {
@@ -78,19 +83,163 @@ public static class Services
             }
         }
 
+        return TopToFileEntries(top, limit, asDirectories: false);
+    }
+
+    public static List<FileEntryDto> ScanFolderFiles(string rootPath, int limit, IProgress<string>? progress = null)
+    {
+        var root = Security.TryCanonicalize(rootPath)
+            ?? throw new InvalidOperationException("Invalid folder path");
+        if (!Directory.Exists(root))
+            throw new InvalidOperationException($"Folder not found: {root}");
+
+        Security.EnsureFolderScanRootAllowed(root);
+
+        var top = CreateTopSet();
+        progress?.Report($"Scanning folder {root}");
+        EnumerateFilesSafe(
+            root,
+            DefaultSkipDirNames(),
+            DefaultSkipFileNames(),
+            top,
+            Math.Clamp(limit, 1, 500),
+            progress,
+            allowUnderRoot: root);
+
+        return TopToFileEntries(top, Math.Clamp(limit, 1, 500), asDirectories: false);
+    }
+
+    public static List<FileEntryDto> ScanLargestFolders(IEnumerable<string> drives, int limit, IProgress<string>? progress = null)
+    {
+        var clamped = Math.Clamp(limit, 1, 500);
+        var skipNames = DefaultSkipDirNames();
+        var skipFiles = DefaultSkipFileNames();
+        var sizes = new Dictionary<string, long>(StringComparer.OrdinalIgnoreCase);
+        var counted = 0;
+
+        foreach (var drive in drives)
+        {
+            var root = Security.TryCanonicalize(drive);
+            if (root is null)
+                continue;
+
+            progress?.Report($"Scanning folders on {root}");
+            try
+            {
+                var stack = new Stack<string>();
+                stack.Push(root);
+
+                while (stack.Count > 0)
+                {
+                    var dir = stack.Pop();
+                    if (ShouldSkipDirectory(dir, allowUnderRoot: null))
+                        continue;
+
+                    IEnumerable<string> files = Array.Empty<string>();
+                    IEnumerable<string> dirs = Array.Empty<string>();
+                    try { files = Directory.EnumerateFiles(dir); } catch { }
+                    try { dirs = Directory.EnumerateDirectories(dir); } catch { }
+
+                    foreach (var file in files)
+                    {
+                        try
+                        {
+                            var name = Path.GetFileName(file);
+                            if (skipFiles.Contains(name))
+                                continue;
+                            var info = new FileInfo(file);
+                            if (!info.Exists)
+                                continue;
+
+                            AddSizeToAncestors(sizes, info.FullName, info.Length, root);
+                            counted++;
+                            if (counted % 2500 == 0)
+                                progress?.Report($"Sized {counted:N0} files…");
+                        }
+                        catch { }
+                    }
+
+                    foreach (var sub in dirs)
+                    {
+                        var name = Path.GetFileName(sub);
+                        if (skipNames.Contains(name))
+                            continue;
+                        if (ShouldSkipDirectory(sub, allowUnderRoot: null))
+                            continue;
+                        stack.Push(sub);
+                    }
+                }
+            }
+            catch
+            {
+                // continue other drives
+            }
+        }
+
+        var top = CreateTopSet();
+        foreach (var (path, size) in sizes)
+        {
+            if (IsDriveRoot(path))
+                continue;
+            InsertTop(top, size, path, clamped);
+        }
+
+        return TopToFileEntries(top, clamped, asDirectories: true);
+    }
+
+    private static void AddSizeToAncestors(
+        Dictionary<string, long> sizes,
+        string filePath,
+        long size,
+        string stopAtRoot)
+    {
+        var stop = Path.GetFullPath(stopAtRoot).TrimEnd('\\');
+        var dir = Path.GetDirectoryName(filePath);
+        while (!string.IsNullOrEmpty(dir))
+        {
+            var full = Path.GetFullPath(dir).TrimEnd('\\');
+            sizes.TryGetValue(full, out var current);
+            sizes[full] = current + size;
+            if (string.Equals(full, stop, StringComparison.OrdinalIgnoreCase) || IsDriveRoot(full))
+                break;
+            dir = Path.GetDirectoryName(full);
+        }
+    }
+
+    private static List<FileEntryDto> TopToFileEntries(
+        SortedSet<(long Size, string Path)> top,
+        int limit,
+        bool asDirectories)
+    {
         var results = new List<FileEntryDto>();
         foreach (var item in top.Take(limit))
         {
             results.Add(new FileEntryDto
             {
                 Path = item.Path,
-                Name = Path.GetFileName(item.Path),
+                Name = Path.GetFileName(item.Path.TrimEnd('\\')) is { Length: > 0 } n
+                    ? n
+                    : item.Path,
                 SizeBytes = item.Size,
-                IsDirectory = Directory.Exists(item.Path),
+                IsDirectory = asDirectories || Directory.Exists(item.Path),
             });
         }
 
         return results;
+    }
+
+    private static bool ShouldSkipDirectory(string dir, string? allowUnderRoot)
+    {
+        if (IsDriveRoot(dir))
+            return false;
+
+        if (Security.IsHardProtectedPath(dir))
+            return true;
+
+        if (allowUnderRoot is not null && Security.IsUnderOrEqual(dir, allowUnderRoot))
+            return false;
+
+        return Security.IsProtectedPath(dir);
     }
 
     private static void EnumerateFilesSafe(
@@ -99,7 +248,8 @@ public static class Services
         HashSet<string> skipFiles,
         SortedSet<(long Size, string Path)> top,
         int limit,
-        IProgress<string>? progress)
+        IProgress<string>? progress,
+        string? allowUnderRoot)
     {
         var stack = new Stack<string>();
         stack.Push(root);
@@ -108,13 +258,8 @@ public static class Services
         while (stack.Count > 0)
         {
             var dir = stack.Pop();
-            if (Security.IsProtectedPath(dir) &&
-                !string.Equals(Path.GetPathRoot(dir)?.TrimEnd('\\') + "\\", dir.TrimEnd('\\') + "\\", StringComparison.OrdinalIgnoreCase))
-            {
-                // allow drive root scan but skip protected subtrees
-                if (!IsDriveRoot(dir))
-                    continue;
-            }
+            if (ShouldSkipDirectory(dir, allowUnderRoot))
+                continue;
 
             IEnumerable<string> files = Array.Empty<string>();
             IEnumerable<string> dirs = Array.Empty<string>();
@@ -144,7 +289,7 @@ public static class Services
                 var name = Path.GetFileName(sub);
                 if (skipNames.Contains(name))
                     continue;
-                if (Security.IsProtectedPath(sub) && !IsDriveRoot(sub))
+                if (ShouldSkipDirectory(sub, allowUnderRoot))
                     continue;
                 stack.Push(sub);
             }
@@ -153,9 +298,25 @@ public static class Services
 
     private static bool IsDriveRoot(string path)
     {
-        var root = Path.GetPathRoot(path);
-        return !string.IsNullOrEmpty(root) &&
-               string.Equals(Path.GetFullPath(path).TrimEnd('\\'), root.TrimEnd('\\'), StringComparison.OrdinalIgnoreCase);
+        if (string.IsNullOrWhiteSpace(path))
+            return false;
+
+        // "C:" / "C:\" — avoid Path.GetFullPath("C:") which resolves to the cwd on that drive.
+        var trimmed = path.TrimEnd('\\');
+        if (trimmed.Length == 2 && char.IsLetter(trimmed[0]) && trimmed[1] == ':')
+            return true;
+
+        try
+        {
+            var root = Path.GetPathRoot(path);
+            if (string.IsNullOrEmpty(root))
+                return false;
+            return string.Equals(trimmed, root.TrimEnd('\\'), StringComparison.OrdinalIgnoreCase);
+        }
+        catch
+        {
+            return false;
+        }
     }
 
     private static void InsertTop(SortedSet<(long Size, string Path)> top, long size, string path, int limit)
