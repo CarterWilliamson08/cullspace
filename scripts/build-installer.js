@@ -11,7 +11,7 @@ const root = path.join(__dirname, '..');
 const dist = path.join(root, 'dist');
 const unpacked = path.join(dist, 'win-unpacked');
 const payload = path.join(root, 'installer', 'payload');
-const installerDist = path.join(root, 'dist-release');
+const installerDist = path.join(root, 'dist-release-out');
 
 function run(command, args, cwd = root) {
   console.log(`\n> ${command} ${args.join(' ')}`);
