@@ -23,13 +23,21 @@ function assertIncludes(file, needle, label) {
   assertIncludes(html, 'id="foldersPane"', 'index.html');
   assertIncludes(html, 'id="btnScanFolderFiles"', 'index.html');
   assertIncludes(html, 'id="btnScanLargeFolders"', 'index.html');
+  assertIncludes(html, 'id="folderLimit"', 'index.html shared limit');
+  assertIncludes(html, 'id="folderStatus"', 'index.html shared status');
+  assertIncludes(html, 'folders-dirs-only', 'index.html mode-specific controls');
   assertIncludes(js, 'scan_folder_files', 'renderer.js');
   assertIncludes(js, 'scan_largest_folders', 'renderer.js');
   assertIncludes(js, 'setFoldersMode', 'renderer.js');
+  assertIncludes(js, 'syncTabStatus', 'renderer.js tab status sync');
   assertIncludes(js, "foldersMode: 'folders'", 'renderer.js default Large folders');
   assertIncludes(js, 'openFolderAsFileScan', 'renderer.js drill-in');
   assertIncludes(html, 'data-folders-mode="folders" class="active"', 'index.html default Large folders');
   assertIncludes(html, 'class="col-size"', 'index.html size column class');
+  const htmlText = fs.readFileSync(html, 'utf8');
+  if (htmlText.includes('foldersDirsToolbar') || htmlText.includes('foldersFilesToolbar')) {
+    throw new Error('index.html: Folders should use a single toolbar like Files/Apps');
+  }
   assertIncludes(preload, 'pickFolder', 'preload.js');
   assertIncludes(main, 'app:pick-folder', 'main.js');
   assertIncludes(main, 'scan_folder_files', 'main.js');

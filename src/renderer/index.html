@@ -90,30 +90,27 @@
       </section>
 
       <section id="foldersPane" class="content-pane hidden">
-        <div class="pane-toolbar folders-mode-bar">
+        <div class="pane-toolbar">
           <div class="segmented folders-mode" role="group" aria-label="Folders mode">
             <button type="button" data-folders-mode="files">Files in folder</button>
             <button type="button" data-folders-mode="folders" class="active">Large folders</button>
           </div>
-        </div>
-        <div id="foldersFilesToolbar" class="pane-toolbar hidden">
-          <input id="folderRoot" class="field grow" type="text" placeholder="Choose a folder to scan" readonly />
-          <button id="btnBrowseFolder" type="button">Browse…</button>
+          <input
+            id="folderRoot"
+            class="field grow folders-files-only hidden"
+            type="text"
+            placeholder="Choose a folder to scan"
+            readonly
+          />
+          <button id="btnBrowseFolder" class="folders-files-only hidden" type="button">Browse…</button>
+          <span id="folderDirsHint" class="toolbar-hint grow folders-dirs-only">Uses selected drives above</span>
           <label class="label-inline">
             Limit
-            <input id="folderFileLimit" class="field" type="number" min="10" max="500" value="100" />
+            <input id="folderLimit" class="field" type="number" min="10" max="500" value="100" />
           </label>
-          <button id="btnScanFolderFiles" class="primary" type="button">Scan folder</button>
-          <span id="folderFilesStatus" class="status"></span>
-        </div>
-        <div id="foldersDirsToolbar" class="pane-toolbar">
-          <span class="toolbar-hint">Uses selected drives above</span>
-          <label class="label-inline">
-            Limit
-            <input id="folderDirLimit" class="field" type="number" min="10" max="500" value="100" />
-          </label>
-          <button id="btnScanLargeFolders" class="primary" type="button">Scan folders</button>
-          <span id="folderDirsStatus" class="status"></span>
+          <button id="btnScanFolderFiles" class="primary folders-files-only hidden" type="button">Scan</button>
+          <button id="btnScanLargeFolders" class="primary folders-dirs-only" type="button">Scan</button>
+          <span id="folderStatus" class="status"></span>
         </div>
         <div id="folderSelectionBar" class="pane-toolbar selection-bar hidden">
           <span id="folderSelectionCount" class="selection-count">0 selected</span>

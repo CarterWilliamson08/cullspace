@@ -507,21 +507,53 @@ function selectedDriveList() {
   return [...state.selectedDrives];
 }
 
-function setFoldersMode(mode) {
-  state.foldersMode = mode === 'folders' ? 'folders' : 'files';
+function setFoldersMode(mode, { keepResults = false } = {}) {
+  const next = mode === 'folders' ? 'folders' : 'files';
+  const changed = state.foldersMode !== next;
+  state.foldersMode = next;
   document.querySelectorAll('[data-folders-mode]').forEach((btn) => {
     btn.classList.toggle('active', btn.getAttribute('data-folders-mode') === state.foldersMode);
   });
-  $('foldersFilesToolbar').classList.toggle('hidden', state.foldersMode !== 'files');
-  $('foldersDirsToolbar').classList.toggle('hidden', state.foldersMode !== 'folders');
+  document.querySelectorAll('.folders-files-only').forEach((el) => {
+    el.classList.toggle('hidden', state.foldersMode !== 'files');
+  });
+  document.querySelectorAll('.folders-dirs-only').forEach((el) => {
+    el.classList.toggle('hidden', state.foldersMode !== 'folders');
+  });
+  if (changed && !keepResults) {
+    state.folderResults = [];
+    state.selectedFolderPaths.clear();
+    if ($('folderStatus')) $('folderStatus').textContent = '';
+  }
   renderFolderResults();
+  if (state.tab === 'folders') syncTabStatus();
+}
+
+function syncTabStatus() {
+  if (state.tab === 'files') {
+    const n = state.files.length;
+    setStatus(n ? `Scan complete · ${n} items` : 'Ready', selectedDriveList().join(' ') || 'Select drives');
+  } else if (state.tab === 'folders') {
+    const n = state.folderResults.length;
+    if (state.foldersMode === 'folders') {
+      setStatus(
+        n ? `Large folders · ${n}` : 'Ready',
+        selectedDriveList().join(' ') || 'Select drives'
+      );
+    } else {
+      setStatus(n ? `Folder files · ${n}` : 'Ready', state.folderRoot || 'Choose a folder');
+    }
+  } else if (state.tab === 'apps') {
+    const n = state.apps.length;
+    setStatus(n ? `Loaded ${n} apps` : 'Ready', 'Installed programs');
+  }
 }
 
 async function openFolderAsFileScan(folderPath) {
   if (!folderPath) return;
   state.folderRoot = folderPath;
   if ($('folderRoot')) $('folderRoot').value = folderPath;
-  setFoldersMode('files');
+  setFoldersMode('files', { keepResults: true });
   await scanFolderFiles();
 }
 
@@ -537,13 +569,13 @@ function renderFolderResults() {
             title: 'No large folders yet',
             body: 'Scan selected drives to rank the biggest folders. Tip: turn on Unique folder savings to prefer deepest paths.',
             buttonId: 'emptyScanFolders',
-            buttonLabel: 'Scan folders',
+            buttonLabel: 'Scan',
           }
         : {
             title: 'No folder files yet',
             body: 'Browse to a folder, then scan to rank its largest files.',
             buttonId: 'emptyScanFolderFiles',
-            buttonLabel: state.folderRoot ? 'Scan folder' : 'Browse…',
+            buttonLabel: state.folderRoot ? 'Scan' : 'Browse…',
           }
     );
     if (state.foldersMode === 'folders') {
@@ -612,7 +644,8 @@ async function browseFolderRoot() {
   if (!chosen) return;
   state.folderRoot = chosen;
   $('folderRoot').value = chosen;
-  $('folderFilesStatus').textContent = 'Folder selected';
+  if ($('folderStatus')) $('folderStatus').textContent = 'Folder selected';
+  setStatus('Folder selected', chosen);
 }
 
 function scanOverlayHtml(message) {
@@ -651,14 +684,14 @@ function formatStats(stats) {
 async function scanFolderFiles() {
   const root = ($('folderRoot').value || state.folderRoot || '').trim();
   if (!root) {
-    $('folderFilesStatus').textContent = 'Choose a folder first.';
+    if ($('folderStatus')) $('folderStatus').textContent = 'Choose a folder first.';
     return;
   }
-  const limit = Number($('folderFileLimit').value) || 100;
+  const limit = Number($('folderLimit')?.value) || 100;
   state.scanCancelled = false;
   showOverlay({ scan: true, html: scanOverlayHtml('Ranking the largest files in the selected folder…') });
   wireScanCancel();
-  $('folderFilesStatus').textContent = 'Scanning…';
+  if ($('folderStatus')) $('folderStatus').textContent = 'Scanning…';
   try {
     const raw = await window.cullspace.call('scan_folder_files', { root, limit });
     const { items, stats } = normalizeScanResult(raw);
@@ -666,10 +699,14 @@ async function scanFolderFiles() {
     state.lastScanStats = stats;
     renderFolderResults();
     const statsLine = formatStats(stats);
-    $('folderFilesStatus').textContent = `${items.length} items${statsLine ? ` · ${statsLine}` : ''}`;
+    if ($('folderStatus')) {
+      $('folderStatus').textContent = `${items.length} items${statsLine ? ` · ${statsLine}` : ''}`;
+    }
     setStatus('Folder scan complete', root);
   } catch (err) {
-    $('folderFilesStatus').textContent = state.scanCancelled ? 'Cancelled' : 'Scan failed';
+    if ($('folderStatus')) {
+      $('folderStatus').textContent = state.scanCancelled ? 'Cancelled' : 'Scan failed';
+    }
     setStatus(state.scanCancelled ? 'Scan cancelled' : 'Folder scan failed', err.message);
     if (!state.scanCancelled) {
       showOverlay({
@@ -685,16 +722,16 @@ async function scanFolderFiles() {
 async function scanLargeFolders() {
   const drives = selectedDriveList();
   if (!drives.length) {
-    $('folderDirsStatus').textContent = 'Select at least one drive.';
+    if ($('folderStatus')) $('folderStatus').textContent = 'Select at least one drive.';
     return;
   }
-  const limit = Number($('folderDirLimit').value) || 100;
+  const limit = Number($('folderLimit')?.value) || 100;
   state.includeProgramFiles = !!$('includeProgramFiles')?.checked;
   state.dedupeDeepest = !!$('dedupeDeepest')?.checked;
   state.scanCancelled = false;
   showOverlay({ scan: true, html: scanOverlayHtml('Ranking the largest folders on selected drives…') });
   wireScanCancel();
-  $('folderDirsStatus').textContent = 'Scanning…';
+  if ($('folderStatus')) $('folderStatus').textContent = 'Scanning…';
   try {
     const raw = await window.cullspace.call('scan_largest_folders', {
       drives,
@@ -707,10 +744,14 @@ async function scanLargeFolders() {
     state.lastScanStats = stats;
     renderFolderResults();
     const statsLine = formatStats(stats);
-    $('folderDirsStatus').textContent = `${items.length} folders${statsLine ? ` · ${statsLine}` : ''}`;
+    if ($('folderStatus')) {
+      $('folderStatus').textContent = `${items.length} folders${statsLine ? ` · ${statsLine}` : ''}`;
+    }
     setStatus('Large folders scan complete', `${items.length} folders`);
   } catch (err) {
-    $('folderDirsStatus').textContent = state.scanCancelled ? 'Cancelled' : 'Scan failed';
+    if ($('folderStatus')) {
+      $('folderStatus').textContent = state.scanCancelled ? 'Cancelled' : 'Scan failed';
+    }
     setStatus(state.scanCancelled ? 'Scan cancelled' : 'Large folders scan failed', err.message);
     if (!state.scanCancelled) {
       showOverlay({
@@ -772,7 +813,7 @@ function renderFiles() {
       title: 'No files scanned yet',
       body: 'Select drives above, then scan to rank the largest files. Your user profile is included; Program Files is opt-in.',
       buttonId: 'emptyScanFiles',
-      buttonLabel: 'Scan drives',
+      buttonLabel: 'Scan',
     });
     $('emptyScanFiles')?.addEventListener('click', scanFiles);
     updateSelectionBar('files');
@@ -1386,6 +1427,7 @@ document.querySelectorAll('.tab').forEach((btn) => {
     }
     syncTabAria();
     moveTabInk();
+    syncTabStatus();
   });
 });
 syncTabAria();
